@@ -36,7 +36,7 @@ def main(args):
 
     start_day = 0
     if args.checkpoints is not None:
-        start_day = agent.try_load_from_checkpoint(args.checkpoints) + 1
+        start_day = agent.try_load_from_checkpoint(args.checkpoints)
     print('Starting from day {}'.format(start_day))
 
     log_writer = None

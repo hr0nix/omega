@@ -130,7 +130,7 @@ class NethackTransformerAgent(NethackAgent):
     }
 
     class TrainState(flax.training.train_state.TrainState):
-        day: int = 0
+        step_index: int = None
 
     def __init__(self, *args, config=None, **kwargs):
         super(NethackTransformerAgent, self).__init__(*args, **kwargs)
@@ -232,19 +232,25 @@ class NethackTransformerAgent(NethackAgent):
         self._loss_grad_func = jax.grad(self._compute_loss, argnums=0)
 
     def try_load_from_checkpoint(self, path):
+        """
+        Loads a checkpoint from the given path if there are any.
+
+        :param path: The path to checkpoints.
+        :return: The index of the step that should be next.
+        """
         checkpoint_path = flax.training.checkpoints.latest_checkpoint(path)
         if checkpoint_path is None:
             print('No checkpoints available at {}'.format(path))
+            return 0
         else:
             print('State will be loaded from checkpoint {}'.format(checkpoint_path))
             self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
+            return self._train_state.step_index + 1
 
-        return self._train_state.day
-
-    def save_to_checkpoint(self, path, day):
-        self._train_state = self._train_state.replace(day=day)
+    def save_to_checkpoint(self, path, step):
+        self._train_state = self._train_state.replace(step_index=step)
         flax.training.checkpoints.save_checkpoint(
-            path, self._train_state, step=day, keep=1, overwrite=True)
+            path, self._train_state, step=step, keep=1, overwrite=True)
 
     def act(self, observation_batch):
         # TODO: we need some form of exploration or policy entropy regularization

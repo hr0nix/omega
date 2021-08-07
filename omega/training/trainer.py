@@ -14,12 +14,17 @@ class Trainer(abc.ABC):
         self._num_day_steps = num_day_steps
         self._num_night_steps = num_night_steps
 
+        self._init_training_envs(num_parallel_envs)
+
+    def _init_training_envs(self, num_parallel_envs):
         self._training_envs = [
-            EnvWrapper(env_factory())
+            EnvWrapper(self._env_factory())
             for _ in range(num_parallel_envs)
         ]
         for env in self._training_envs:
             env.reset()
+        self._env_run_indices = [i for i in range(len(self._training_envs))]
+        self._next_env_run_index = len(self._training_envs)
 
     @property
     def num_day_steps(self):
@@ -35,14 +40,14 @@ class Trainer(abc.ABC):
         return stats
 
     def _run_day(self, agent, stats=None):
+        stats = stats or EvaluationStats()
+
+        # Gather a new batch of trajectories every day
         trajectory_batch = TrajectoryBatch()
         trajectories = [
             trajectory_batch.add_trajectory(env.current_state)
             for env in self._training_envs
         ]
-        run_indices = [i for i in range(len(self._training_envs))]
-        next_run_index = len(self._training_envs)
-        stats = stats or EvaluationStats()
 
         for step in range(self.num_day_steps):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
@@ -51,14 +56,14 @@ class Trainer(abc.ABC):
             for env_index in range(len(self._training_envs)):
                 obs, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
                 trajectories[env_index].append(action_batch[env_index], obs, reward, done)
-                stats.add_stats(run_indices[env_index], reward)
+                stats.add_stats(self._env_run_indices[env_index], reward)
                 if done:
                     # Start a new trajectory
                     trajectories[env_index] = trajectory_batch.add_trajectory(
                         self._training_envs[env_index].reset())
                     # Allocate a new run index for stats accumulation
-                    run_indices[env_index] = next_run_index
-                    next_run_index += 1
+                    self._env_run_indices[env_index] = self._next_env_run_index + 1
+                    self._next_env_run_index += 1
 
         return trajectory_batch, stats
 
