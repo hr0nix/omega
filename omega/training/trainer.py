@@ -2,8 +2,8 @@ import abc
 
 import jax.numpy as jnp
 
-from omega.training.env_wrapper import EnvWrapper
-
+from ..training.env_wrapper import EnvWrapper
+from ..utils.profiling import timeit
 from .trajectory import TrajectoryBatch
 from ..evaluation import EvaluationStats
 

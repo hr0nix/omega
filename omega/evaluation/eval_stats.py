@@ -22,13 +22,22 @@ class EvaluationStats(object):
         s.steps += 1
         s.total_reward += reward
 
-    def print_summary(self, title=None):
+    def to_dict(self):
         num_episodes = len(self._per_run_stats)
         num_steps = sum(rs.steps for rs in self._per_run_stats.values())
-        reward_sum = sum(rs.steps for rs in self._per_run_stats.values())
+        reward_sum = sum(rs.total_reward for rs in self._per_run_stats.values())
 
+        return {
+            'episodes': num_episodes,
+            'reward_per_episode': reward_sum / num_episodes,
+            'reward_per_step': reward_sum / num_steps,
+        }
+
+    def print_summary(self, title=None):
+        stats = self.to_dict()
         title = title or 'Evaluation summary:'
+
         print(title)
-        print('  Episodes: {}'.format(num_episodes))
-        print('  Per-episode avg reward: {}'.format(reward_sum / num_episodes))
-        print('  Per-step avg reward: {}'.format(reward_sum / num_steps))
+        print('  Episodes: {}'.format(stats['episodes']))
+        print('  Per-episode avg reward: {}'.format(stats['reward_per_episode']))
+        print('  Per-step avg reward: {}'.format(stats['reward_per_step']))

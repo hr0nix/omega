@@ -1,12 +1,15 @@
 import copy
 from typing import Optional
 
+import flax.training.train_state
+import flax.training.checkpoints
 import flax.linen as nn
 import jax.numpy as jnp
 import jax.random
 import optax
 import rlax
 
+from ..utils.profiling import timeit
 from .trainable_agent import TrainableAgentBase
 from ..neural import TransformerNet, CrossTransformerNet, DenseNet
 
@@ -126,18 +129,20 @@ class NethackTransformerAgent(NethackAgent):
         'lr': 1e-3,
     }
 
+    class TrainState(flax.training.train_state.TrainState):
+        day: int = 0
+
     def __init__(self, *args, config=None, **kwargs):
         super(NethackTransformerAgent, self).__init__(*args, **kwargs)
         
         self._config = copy.deepcopy(self.CONFIG)
         self._config.update(config or {})
 
-        self._model = None
-        self._model_params = None
-        self._optimizer = None
-        self._optimizer_state = None
-
         self._random_key = jax.random.PRNGKey(0)
+
+        self._model = None
+        self._train_state = None
+        self._build_model()
 
     def _build_model_batch(self, trajectory_batch):
         rewards_to_go = [
@@ -196,7 +201,8 @@ class NethackTransformerAgent(NethackAgent):
             model_params, observations_batch, deterministic=False, rng=rng)
         advantage = targets_batch['rewards_to_go'] - value
         weights = jnp.ones(shape=advantage.shape)
-        policy_gradient_loss = rlax.policy_gradient_loss(log_action_probs, targets_batch['actions'], advantage, weights)
+        policy_gradient_loss = rlax.policy_gradient_loss(
+            log_action_probs, targets_batch['actions'], advantage, weights)
         value_function_loss = jnp.mean(rlax.l2_loss(value, targets_batch['rewards_to_go']))
         return policy_gradient_loss + self._config['value_function_loss_weight'] * value_function_loss
 
@@ -204,32 +210,51 @@ class NethackTransformerAgent(NethackAgent):
         self._random_key, subkey = jax.random.split(self._random_key)
         return subkey
 
-    def _build_model(self, observations_batch):
+    def _build_model(self):
+        observations_batch = {
+            'glyphs': jnp.zeros(shape=(1, NethackAgent.MAP_ROWS, NethackAgent.MAP_COLS), dtype=jnp.int32)
+        }
+        self._build_model_for_batch(observations_batch)
+
+    def _build_model_for_batch(self, observations_batch):
         assert self._model is None
 
         self._model = NethackPerceiverModel(num_actions=self.action_space.n)
 
-        self._model_params = self._model.init(
+        model_params = self._model.init(
             self._next_random_key(), observations_batch, deterministic=False, rng=self._next_random_key())
 
-        self._optimizer = optax.adam(learning_rate=self._config['lr'])
-        self._optimizer_state = self._optimizer.init(self._model_params)
+        optimizer = optax.adam(learning_rate=self._config['lr'])
+
+        self._train_state = self.TrainState.create(
+            apply_fn=self._model.apply, params=model_params, tx=optimizer)
+
+        self._loss_grad_func = jax.grad(self._compute_loss, argnums=0)
+
+    def try_load_from_checkpoint(self, path):
+        checkpoint_path = flax.training.checkpoints.latest_checkpoint(path)
+        if checkpoint_path is None:
+            print('No checkpoints available at {}'.format(path))
+        else:
+            print('State will be loaded from checkpoint {}'.format(checkpoint_path))
+            self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
+
+        return self._train_state.day
+
+    def save_to_checkpoint(self, path, day):
+        self._train_state = self._train_state.replace(day=day)
+        flax.training.checkpoints.save_checkpoint(
+            path, self._train_state, step=day, keep=1, overwrite=True)
 
     def act(self, observation_batch):
-        if self._model is None:
-            self._build_model(observation_batch)
-
-        # TODO: we need some form of exploration
+        # TODO: we need some form of exploration or policy entropy regularization
         log_action_probs, value = self._model.apply(
-            self._model_params, observation_batch, deterministic=True, rng=self._next_random_key())
+            self._train_state.params, observation_batch, deterministic=True, rng=self._next_random_key())
         return jax.random.categorical(self._next_random_key(), log_action_probs)
 
     def train_on_batch(self, trajectory_batch):
-        assert self._model is not None
-
         # TODO: replace pair sampling by recurrence
         observations_batch, targets_batch = self._build_model_batch(trajectory_batch)
-        grad_func = jax.grad(self._compute_loss, argnums=0)
-        grads = grad_func(self._model_params, observations_batch, targets_batch, rng=self._next_random_key())
-        updates, self._optimizer_state = self._optimizer.update(grads, self._optimizer_state)
-        self._model_params = optax.apply_updates(self._model_params, updates)
+        grads = self._loss_grad_func(
+            self._train_state.params, observations_batch, targets_batch, rng=self._next_random_key())
+        self._train_state = self._train_state.apply_gradients(grads=grads)

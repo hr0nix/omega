@@ -17,7 +17,3 @@ class Agent(abc.ABC):
     @abc.abstractmethod
     def act(self, observation_batch):
         pass
-
-    @abc.abstractmethod
-    def train_on_batch(self, trajectory_batch):
-        pass

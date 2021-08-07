@@ -1,5 +1,11 @@
+import argparse
+import yaml
+import tqdm
+
 import gym
 import nle
+
+import clu.metric_writers
 
 from omega.agents import RandomAgent, NethackTransformerAgent
 from omega.training import OnPolicyTrainer
@@ -10,29 +16,55 @@ def env_factory():
     return gym.make("NetHackScore-v0")
 
 
-def main():
+def load_config(filename):
+    with open(filename, 'r') as f:
+        return yaml.safe_load(f)
+
+
+def main(args):
+    config = load_config(args.config)
+
     env = env_factory()
-    agent = NethackTransformerAgent(env.observation_space, env.action_space)
+    agent = NethackTransformerAgent(env.observation_space, env.action_space, config=config['model_config'])
     trainer = OnPolicyTrainer(
-        batch_size=64,
         env_factory=env_factory,
-        num_parallel_envs=4,
-        num_day_steps=10,
-        num_night_steps=1,
+        batch_size=config['batch_size'],
+        num_parallel_envs=config['num_parallel_envs'],
+        num_day_steps=config['num_day_steps'],
+        num_night_steps=config['num_night_steps'],
     )
-    num_days = 10
-    summarize_every_num_days = 2
+
+    start_day = 0
+    if args.checkpoints is not None:
+        start_day = agent.try_load_from_checkpoint(args.checkpoints) + 1
+    print('Starting from day {}'.format(start_day))
+
+    log_writer = None
+    if args.tb_logs is not None:
+        log_writer = clu.metric_writers.create_default_writer(args.tb_logs)
 
     stats = EvaluationStats()
-    for day in range(num_days):
-        print('Day {}'.format(day))
-
+    for day in tqdm.tqdm(range(start_day, config['num_days'])):
         trainer.run_training_step(agent, stats)
 
-        if (day + 1) % summarize_every_num_days == 0:
+        if (day + 1) % config['epoch_every_num_days'] == 0:
+            if log_writer is not None:
+                log_writer.write_scalars(day, stats.to_dict())
             stats.print_summary(title='After {} days:'.format(day + 1))
             stats.reset()
 
+            if args.checkpoints is not None:
+                agent.save_to_checkpoint(args.checkpoints, day)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', metavar='FILE', required=True)
+    parser.add_argument('--tb-logs', metavar='DIR', required=False)
+    parser.add_argument('--checkpoints', metavar='DIR', required=False)
+    return parser.parse_args()
+
 
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(args)
