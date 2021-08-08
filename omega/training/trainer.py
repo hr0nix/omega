@@ -51,11 +51,18 @@ class Trainer(abc.ABC):
 
         for step in range(self.num_day_steps):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
-            action_batch = agent.act(observation_batch)
+            action_batch, metadata_batch = agent.act(observation_batch)
+
+            def metadata_subbatch(env_index):
+                return {
+                    key: value[env_index]
+                    for key, value in metadata_batch.items()
+                }
 
             for env_index in range(len(self._training_envs)):
                 obs, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
-                trajectories[env_index].append(action_batch[env_index], obs, reward, done)
+                trajectories[env_index].add_transition(
+                    action_batch[env_index], obs, reward, done, metadata_subbatch(env_index))
                 stats.add_stats(self._env_run_indices[env_index], reward)
                 if done:
                     # Start a new trajectory

@@ -3,39 +3,48 @@ import numpy as np
 
 
 @attr.s
-class TrajectoryElement(object):
-    action = attr.ib()
+class Transition(object):
+    """
+    The observation of a state we're currently in.
+    """
     observation = attr.ib()
+    """
+    The action that took us here.
+    """
+    action = attr.ib()
+    """
+    The reward for getting in this state. 
+    """
     reward = attr.ib(type=float)
+    """
+    Whether this is a terminal state.
+    """
     done = attr.ib(type=bool)
+    """
+    Metadata associated with the transition to this state (action log probs, state values etc.)
+    """
+    metadata = attr.ib(type=dict)
 
 
 class Trajectory(object):
     def __init__(self, initial_state):
         self._initial_state = initial_state
-        self._elements = []
+        self._transitions = []
 
     @property
     def initial_state(self):
         return self._initial_state
 
-    def __len__(self):
-        return len(self._elements)
-
     @property
-    def elements(self):
-        return self._elements
+    def transitions(self):
+        return self._transitions
 
-    def compute_rewards_to_go(self):
-        # TODO: support discount factor?
-        result = np.zeros(shape=(len(self.elements),), dtype=np.float32)
-        for i in range(len(self.elements)):
-            prev_reward_to_go = result[-1 - i + 1] if i > 0 else 0.0
-            result[-1 - i] = prev_reward_to_go + self._elements[-1 - i].reward
-        return result
-
-    def append(self, action, observation, reward, done):
-        self._elements.append(TrajectoryElement(action, observation, reward, done))
+    def add_transition(self, action, observation, reward, done, metadata):
+        self._transitions.append(
+            Transition(
+                action=action, observation=observation, reward=reward, done=done, metadata=metadata
+            )
+        )
 
 
 class TrajectoryBatch(object):
