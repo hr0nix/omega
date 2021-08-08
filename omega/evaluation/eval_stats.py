@@ -37,7 +37,7 @@ class EvaluationStats(object):
         stats = self.to_dict()
         title = title or 'Evaluation summary:'
 
-        print(title)
-        print('  Episodes: {}'.format(stats['episodes']))
-        print('  Per-episode avg reward: {}'.format(stats['reward_per_episode']))
-        print('  Per-step avg reward: {}'.format(stats['reward_per_step']))
+        print(title, flush=True)
+        print('  Episodes: {}'.format(stats['episodes']), flush=True)
+        print('  Per-episode avg reward: {}'.format(stats['reward_per_episode']), flush=True)
+        print('  Per-step avg reward: {}'.format(stats['reward_per_step']), flush=True)

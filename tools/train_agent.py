@@ -7,9 +7,13 @@ import nle
 
 import clu.metric_writers
 
+from absl import logging
+logging.set_verbosity(logging.INFO)
+
 from omega.agents import RandomAgent, NethackTransformerAgent
 from omega.training import OnPolicyTrainer
 from omega.evaluation import EvaluationStats
+from omega.utils.jax import disable_jit_if_no_gpu
 
 
 def env_factory():
@@ -37,7 +41,7 @@ def main(args):
     start_day = 0
     if args.checkpoints is not None:
         start_day = agent.try_load_from_checkpoint(args.checkpoints)
-    print('Starting from day {}'.format(start_day))
+    logging.info('Starting from day {}'.format(start_day))
 
     log_writer = None
     if args.tb_logs is not None:
@@ -67,4 +71,5 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
-    main(args)
+    with disable_jit_if_no_gpu():
+        main(args)

@@ -9,19 +9,12 @@ import jax.random
 import optax
 import rlax
 
+import nle.nethack
+
+
 from ..utils.profiling import timeit
 from .trainable_agent import TrainableAgentBase
 from ..neural import TransformerNet, CrossTransformerNet, DenseNet
-
-
-class NethackAgent(TrainableAgentBase):
-    MAX_GLYPH = 5991
-    MAP_ROWS = 21
-    MAP_COLS = 79
-    FEATURES = 25
-    MAX_MESSAGE_LENGTH = 256
-    MAX_INVENTORY_LENGTH = 55
-    NUM_ACTIONS = 98
 
 
 class NethackPerceiverModel(nn.Module):
@@ -41,11 +34,11 @@ class NethackPerceiverModel(nn.Module):
 
     def setup(self):
         self._glyph_pos_embedding = nn.Embed(
-            num_embeddings=NethackAgent.MAP_ROWS * NethackAgent.MAP_COLS,
+            num_embeddings=nle.nethack.DUNGEON_SHAPE[0] * nle.nethack.DUNGEON_SHAPE[1],
             features=self.glyph_embedding_dim
         )
         self._glyph_embedding = nn.Embed(
-            num_embeddings=NethackAgent.MAX_GLYPH + 1,
+            num_embeddings=nle.nethack.MAX_GLYPH + 1,
             features=self.glyph_embedding_dim
         )
         self._memory_embedding = nn.Embed(
@@ -98,7 +91,8 @@ class NethackPerceiverModel(nn.Module):
         glyphs = jnp.reshape(glyphs, newshape=(glyphs.shape[0], -1))
         glyphs_embeddings = self._glyph_embedding(glyphs)
 
-        glyph_pos_indices = jnp.arange(0, NethackAgent.MAP_ROWS * NethackAgent.MAP_COLS, dtype=jnp.int32)
+        glyph_pos_indices = jnp.arange(
+            0, nle.nethack.DUNGEON_SHAPE[0] * nle.nethack.DUNGEON_SHAPE[1], dtype=jnp.int32)
         glyph_pos_embeddings = self._glyph_pos_embedding(glyph_pos_indices)
         glyphs_embeddings += glyph_pos_embeddings
 
@@ -122,7 +116,7 @@ class NethackPerceiverModel(nn.Module):
         return action_logprobs, state_value
 
 
-class NethackTransformerAgent(NethackAgent):
+class NethackTransformerAgent(TrainableAgentBase):
     CONFIG = {
         'model_batch_size': 32,
         'value_function_loss_weight': 1.0,
@@ -134,15 +128,15 @@ class NethackTransformerAgent(NethackAgent):
 
     def __init__(self, *args, config=None, **kwargs):
         super(NethackTransformerAgent, self).__init__(*args, **kwargs)
-        
-        self._config = copy.deepcopy(self.CONFIG)
-        self._config.update(config or {})
 
         self._random_key = jax.random.PRNGKey(0)
+        self._config = self._make_config(config)
+        self._model, self._train_state = self._build_model()
 
-        self._model = None
-        self._train_state = None
-        self._build_model()
+    def _make_config(self, config):
+        result = copy.deepcopy(self.CONFIG)
+        result.update(config or {})
+        return flax.core.frozen_dict.FrozenDict(result)
 
     def _build_model_batch(self, trajectory_batch):
         rewards_to_go = [
@@ -196,40 +190,29 @@ class NethackTransformerAgent(NethackAgent):
 
         return observations, targets
 
-    def _compute_loss(self, model_params, observations_batch, targets_batch, rng):
-        log_action_probs, value = self._model.apply(
-            model_params, observations_batch, deterministic=False, rng=rng)
-        advantage = targets_batch['rewards_to_go'] - value
-        weights = jnp.ones(shape=advantage.shape)
-        policy_gradient_loss = rlax.policy_gradient_loss(
-            log_action_probs, targets_batch['actions'], advantage, weights)
-        value_function_loss = jnp.mean(rlax.l2_loss(value, targets_batch['rewards_to_go']))
-        return policy_gradient_loss + self._config['value_function_loss_weight'] * value_function_loss
-
     def _next_random_key(self):
         self._random_key, subkey = jax.random.split(self._random_key)
         return subkey
 
     def _build_model(self):
         observations_batch = {
-            'glyphs': jnp.zeros(shape=(1, NethackAgent.MAP_ROWS, NethackAgent.MAP_COLS), dtype=jnp.int32)
+            'glyphs': jnp.zeros(
+                shape=(1, nle.nethack.DUNGEON_SHAPE[0], nle.nethack.DUNGEON_SHAPE[1]),
+                dtype=jnp.int32
+            )
         }
-        self._build_model_for_batch(observations_batch)
+        return self._build_model_for_batch(observations_batch)
 
     def _build_model_for_batch(self, observations_batch):
-        assert self._model is None
-
-        self._model = NethackPerceiverModel(num_actions=self.action_space.n)
-
-        model_params = self._model.init(
+        model = NethackPerceiverModel(num_actions=self.action_space.n)
+        model_params = model.init(
             self._next_random_key(), observations_batch, deterministic=False, rng=self._next_random_key())
 
         optimizer = optax.adam(learning_rate=self._config['lr'])
 
-        self._train_state = self.TrainState.create(
-            apply_fn=self._model.apply, params=model_params, tx=optimizer)
+        train_state = self.TrainState.create(apply_fn=model.apply, params=model_params, tx=optimizer)
 
-        self._loss_grad_func = jax.grad(self._compute_loss, argnums=0)
+        return model, train_state
 
     def try_load_from_checkpoint(self, path):
         """
@@ -253,14 +236,36 @@ class NethackTransformerAgent(NethackAgent):
             path, self._train_state, step=step, keep=1, overwrite=True)
 
     def act(self, observation_batch):
-        # TODO: we need some form of exploration or policy entropy regularization
-        log_action_probs, value = self._model.apply(
-            self._train_state.params, observation_batch, deterministic=True, rng=self._next_random_key())
-        return jax.random.categorical(self._next_random_key(), log_action_probs)
+        @jax.jit
+        def _forward_step(train_state, observation_batch, rng):
+            rng1, rng2 = jax.random.split(rng)
+            log_action_probs, value = train_state.apply_fn(
+                train_state.params, observation_batch, deterministic=True, rng=rng1)
+            # TODO: we need some form of exploration or policy entropy regularization
+            return jax.random.categorical(rng2, log_action_probs)
+
+        return _forward_step(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
         # TODO: replace pair sampling by recurrence
         observations_batch, targets_batch = self._build_model_batch(trajectory_batch)
-        grads = self._loss_grad_func(
-            self._train_state.params, observations_batch, targets_batch, rng=self._next_random_key())
-        self._train_state = self._train_state.apply_gradients(grads=grads)
+
+        @jax.jit
+        def _train_step(config, train_state, observations_batch, targets_batch, rng):
+            def loss_function(params, rng):
+                # TODO(hr0nix): it should come from trajectory in targets_batch, but how would you do backprop?
+                log_action_probs, value = train_state.apply_fn(
+                    params, observations_batch, deterministic=False, rng=rng)
+                advantage = targets_batch['rewards_to_go'] - value
+                weights = jnp.ones(shape=advantage.shape)
+                policy_gradient_loss = rlax.policy_gradient_loss(
+                    log_action_probs, targets_batch['actions'], advantage, weights)
+                value_function_loss = jnp.mean(rlax.l2_loss(value, targets_batch['rewards_to_go']))
+                return policy_gradient_loss + config['value_function_loss_weight'] * value_function_loss
+
+            loss_function_grad = jax.grad(loss_function)
+            grads = loss_function_grad(train_state.params, rng=rng)
+            return train_state.apply_gradients(grads=grads)
+
+        self._train_state = _train_step(
+            self._config, self._train_state, observations_batch, targets_batch, self._next_random_key())
