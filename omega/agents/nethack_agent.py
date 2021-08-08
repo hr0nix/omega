@@ -155,7 +155,9 @@ class NethackTransformerAgent(TrainableAgentBase):
 
         # We need this to sample short trajectories less often
         def num_available_src_states(trajectory):
-            if trajectory.transitions[-1].done:
+            if len(trajectory.transitions) == 0:
+                return 0
+            elif trajectory.transitions[-1].done:
                 return len(trajectory.transitions)
             else:
                 # If the trajectory doesn't end in a terminal state,
