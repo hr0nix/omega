@@ -1,4 +1,5 @@
 from typing import Optional
+from functools import partial
 
 from absl import logging
 
@@ -247,44 +248,43 @@ class NethackTransformerAgent(TrainableAgentBase):
         flax.training.checkpoints.save_checkpoint(
             path, self._train_state, step=step, keep=1, overwrite=True)
 
-    def act(self, observation_batch):
-        @jax.jit
-        def _forward_step(train_state, observation_batch, rng):
-            rng1, rng2 = jax.random.split(rng)
-            log_action_probs, state_values = train_state.apply_fn(
-                train_state.params, observation_batch, deterministic=True, rng=rng1)
-            metadata = {
-                'log_action_probs': log_action_probs,
-                'state_values': state_values,
-            }
-            # TODO: we need some form of exploration or policy entropy regularization
-            selected_actions = jax.random.categorical(rng2, log_action_probs)
-            return selected_actions, metadata
+    @partial(jax.jit, static_argnums=(0,))
+    def _forward_step(self, train_state, observation_batch, rng):
+        rng1, rng2 = jax.random.split(rng)
+        log_action_probs, state_values = train_state.apply_fn(
+            train_state.params, observation_batch, deterministic=True, rng=rng1)
+        metadata = {
+            'log_action_probs': log_action_probs,
+            'state_values': state_values,
+        }
+        # TODO: we need some form of exploration or policy entropy regularization
+        selected_actions = jax.random.categorical(rng2, log_action_probs)
+        return selected_actions, metadata
 
-        return _forward_step(self._train_state, observation_batch, self._next_random_key())
+    @partial(jax.jit, static_argnums=(0,))
+    def _train_step(self, train_state, observations_batch, targets_batch, rng):
+        def loss_function(params, rng):
+            # TODO(hr0nix): it should come from trajectory in targets_batch, but how would you do backprop?
+            log_action_probs, state_values = train_state.apply_fn(
+                params, observations_batch, deterministic=False, rng=rng)
+            ones = jnp.ones(shape=state_values.shape)
+            batch_td_learning = jax.vmap(rlax.td_learning, in_axes=0)
+            td_error = batch_td_learning(
+                state_values, targets_batch['rewards'], ones, targets_batch['dest_state_values'])
+            policy_gradient_loss = rlax.policy_gradient_loss(
+                log_action_probs, targets_batch['actions'], td_error, ones)
+            value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(td_error ** 2)
+            return policy_gradient_loss + value_function_loss
+
+        loss_function_grad = jax.grad(loss_function)
+        grads = loss_function_grad(train_state.params, rng=rng)
+        return train_state.apply_gradients(grads=grads)
+
+    def act(self, observation_batch):
+        return self._forward_step(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
         # TODO: replace pair sampling by recurrence
         observations_batch, targets_batch = self._build_model_batch(trajectory_batch)
-
-        @jax.jit
-        def _train_step(config, train_state, observations_batch, targets_batch, rng):
-            def loss_function(params, rng):
-                # TODO(hr0nix): it should come from trajectory in targets_batch, but how would you do backprop?
-                log_action_probs, state_values = train_state.apply_fn(
-                    params, observations_batch, deterministic=False, rng=rng)
-                ones = jnp.ones(shape=state_values.shape)
-                batch_td_learning = jax.vmap(rlax.td_learning, in_axes=0)
-                td_error = batch_td_learning(
-                    state_values, targets_batch['rewards'], ones, targets_batch['dest_state_values'])
-                policy_gradient_loss = rlax.policy_gradient_loss(
-                    log_action_probs, targets_batch['actions'], td_error, ones)
-                value_function_loss = config['value_function_loss_weight'] * jnp.mean(td_error ** 2)
-                return policy_gradient_loss + value_function_loss
-
-            loss_function_grad = jax.grad(loss_function)
-            grads = loss_function_grad(train_state.params, rng=rng)
-            return train_state.apply_gradients(grads=grads)
-
-        self._train_state = _train_step(
-            self._config, self._train_state, observations_batch, targets_batch, self._next_random_key())
+        self._train_state = self._train_step(
+            self._train_state, observations_batch, targets_batch, self._next_random_key())
