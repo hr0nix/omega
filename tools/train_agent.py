@@ -34,8 +34,7 @@ def main(args):
         env_factory=env_factory,
         batch_size=config['batch_size'],
         num_parallel_envs=config['num_parallel_envs'],
-        num_day_steps=config['num_day_steps'],
-        num_night_steps=config['num_night_steps'],
+        num_collection_steps=config['num_collection_steps'],
     )
 
     start_day = 0

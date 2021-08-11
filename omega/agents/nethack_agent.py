@@ -120,9 +120,10 @@ class NethackPerceiverModel(nn.Module):
 
 class NethackTransformerAgent(TrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
-        'model_batch_size': 32,
         'value_function_loss_weight': 1.0,
         'lr': 1e-3,
+        'discount_factor': 0.99,
+        'gae_lambda': 0.95,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -134,76 +135,6 @@ class NethackTransformerAgent(TrainableAgentBase):
         self._random_key = jax.random.PRNGKey(0)
         self._config = self.CONFIG.copy(config or {})
         self._model, self._train_state = self._build_model()
-
-    # TODO: can this function be made jit-able?
-    def _build_model_batch(self, trajectory_batch):
-        model_batch_size = self._config['model_batch_size']
-
-        observations_unstacked = {
-            'glyphs': []
-        }
-        targets_unstacked = {
-            'actions': [],
-            'rewards': [],
-            'dest_state_values': [],
-        }
-        target_dtypes = {
-            'actions': jnp.int32,
-            'rewards': jnp.float32,
-            'dest_state_values': jnp.float32,
-        }
-
-        # We need this to sample short trajectories less often
-        def num_available_src_states(trajectory):
-            if len(trajectory.transitions) == 0:
-                return 0
-            elif trajectory.transitions[-1].done:
-                return len(trajectory.transitions)
-            else:
-                # If the trajectory doesn't end in a terminal state,
-                # we won't have a value estimate for the last state so we can't use the transition to it.
-                return len(trajectory.transitions) - 1
-
-        trajectory_freqs = jnp.array(
-            [num_available_src_states(t) for t in trajectory_batch.trajectories],
-            dtype=jnp.int32)
-        trajectory_logprobs = jnp.log(trajectory_freqs / jnp.sum(trajectory_freqs, dtype=jnp.float32))
-
-        for example_index in range(model_batch_size):
-            trajectory_index = jax.random.categorical(self._next_random_key(), trajectory_logprobs)
-            trajectory = trajectory_batch.trajectories[trajectory_index]
-
-            transition_index = jax.random.randint(
-                self._next_random_key(), shape=(), minval=0, maxval=trajectory_freqs[trajectory_index])
-
-            # The src state of the transition is either an initial state or a dest state of the previous transition
-            src_state = (
-                trajectory.initial_state if transition_index == 0
-                else trajectory.transitions[transition_index - 1].observation
-            )
-            observations_unstacked['glyphs'].append(src_state['glyphs'])
-
-            targets_unstacked['actions'].append(trajectory.transitions[transition_index].action)
-            targets_unstacked['rewards'].append(trajectory.transitions[transition_index].reward)
-
-            if transition_index < len(trajectory.transitions) - 1:
-                # We have a value computed for the next state
-                dest_state_value = trajectory.transitions[transition_index + 1].metadata['state_values']
-            else:
-                assert trajectory.transitions[transition_index].done  # We can only do it for the terminal state
-                dest_state_value = 0.0  # We can't get any reward from a terminal state
-            targets_unstacked['dest_state_values'].append(dest_state_value)
-
-        observations = {
-            key: jnp.stack(values, axis=0)
-            for key, values in observations_unstacked.items()
-        }
-        targets = {
-            key: jnp.array(values, dtype=target_dtypes[key])
-            for key, values in targets_unstacked.items()
-        }
-
-        return observations, targets
 
     def _next_random_key(self):
         self._random_key, subkey = jax.random.split(self._random_key)
@@ -264,19 +195,32 @@ class NethackTransformerAgent(TrainableAgentBase):
         return selected_actions, metadata
 
     @partial(jax.jit, static_argnums=(0,))
-    def _train_step(self, train_state, observations_batch, targets_batch, rng):
+    def _train_step(self, train_state, trajectory_batch, rng):
         def loss_function(params, rng):
-            # TODO(hr0nix): it should come from trajectory in targets_batch, but how would you do backprop?
-            log_action_probs, state_values = train_state.apply_fn(
-                params, observations_batch, deterministic=False, rng=rng)
-            ones = jnp.ones(shape=state_values.shape)
-            batch_td_learning = jax.vmap(rlax.td_learning, in_axes=0)
-            td_error = batch_td_learning(
-                state_values, targets_batch['rewards'], ones, targets_batch['dest_state_values'])
-            policy_gradient_loss = rlax.policy_gradient_loss(
-                log_action_probs, targets_batch['actions'], td_error, ones)
-            value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(td_error ** 2)
-            return policy_gradient_loss + value_function_loss
+            def per_trajectory_loss(observations, actions, rewards, done):
+                log_action_probs, state_values = train_state.apply_fn(
+                    params, observations, deterministic=False, rng=rng)
+
+                discounts = done * self._config['discount_factor']
+
+                # We ignore last reward as we don't have value function for the next state
+                advantage = rlax.truncated_generalized_advantage_estimation(
+                    rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values,
+                    stop_target_gradients=False,  # This expression can be optimized wrt state values
+                )
+                policy_gradient_loss = rlax.policy_gradient_loss(
+                    log_action_probs[:-1], actions[:-1], advantage, jnp.ones_like(advantage),
+                    use_stop_gradient=True,  # Block gradient into advantages
+                )
+                value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(0.5 * advantage ** 2)
+                return policy_gradient_loss + value_function_loss
+
+            batch_loss = jax.vmap(per_trajectory_loss, in_axes=0)
+            batch_loss_value = batch_loss(
+                trajectory_batch['observations'], trajectory_batch['actions'],
+                trajectory_batch['rewards'], trajectory_batch['done']
+            )
+            return jnp.mean(batch_loss_value)
 
         loss_function_grad = jax.grad(loss_function)
         grads = loss_function_grad(train_state.params, rng=rng)
@@ -286,7 +230,4 @@ class NethackTransformerAgent(TrainableAgentBase):
         return self._forward_step(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
-        # TODO: replace pair sampling by recurrence
-        observations_batch, targets_batch = self._build_model_batch(trajectory_batch)
-        self._train_state = self._train_step(
-            self._train_state, observations_batch, targets_batch, self._next_random_key())
+        self._train_state = self._train_step(self._train_state, trajectory_batch.to_dict(), self._next_random_key())

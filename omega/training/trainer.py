@@ -9,10 +9,9 @@ from ..evaluation import EvaluationStats
 
 
 class Trainer(abc.ABC):
-    def __init__(self, env_factory, num_parallel_envs, num_day_steps, num_night_steps):
+    def __init__(self, env_factory, num_parallel_envs, num_collection_steps):
         self._env_factory = env_factory
-        self._num_day_steps = num_day_steps
-        self._num_night_steps = num_night_steps
+        self._num_collection_steps = num_collection_steps
 
         self._init_training_envs(num_parallel_envs)
 
@@ -23,16 +22,12 @@ class Trainer(abc.ABC):
         ]
         for env in self._training_envs:
             env.reset()
-        self._env_run_indices = [i for i in range(len(self._training_envs))]
+        self._env_run_indices = list(range(len(self._training_envs)))
         self._next_env_run_index = len(self._training_envs)
 
     @property
-    def num_day_steps(self):
-        return self._num_day_steps
-
-    @property
-    def num_night_steps(self):
-        return self._num_night_steps
+    def num_collection_steps(self):
+        return self._num_collection_steps
 
     def run_training_step(self, agent, stats=None):
         trajectory_batch, stats = self._run_day(agent, stats)
@@ -41,41 +36,42 @@ class Trainer(abc.ABC):
 
     def _run_day(self, agent, stats=None):
         stats = stats or EvaluationStats()
+        trajectory_batch = TrajectoryBatch(
+            num_trajectories=len(self._training_envs), num_transitions=self.num_collection_steps)
 
-        # Gather a new batch of trajectories every day
-        trajectory_batch = TrajectoryBatch()
-        trajectories = [
-            trajectory_batch.add_trajectory(env.current_state)
-            for env in self._training_envs
-        ]
-
-        for step in range(self.num_day_steps):
+        for step in range(self.num_collection_steps):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
             action_batch, metadata_batch = agent.act(observation_batch)
-
-            def metadata_subbatch(env_index):
-                return {
-                    key: value[env_index]
-                    for key, value in metadata_batch.items()
-                }
+            rewards, dones = [], []
 
             for env_index in range(len(self._training_envs)):
-                obs, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
-                trajectories[env_index].add_transition(
-                    action_batch[env_index], obs, reward, done, metadata_subbatch(env_index))
+                obs_after, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
+                rewards.append(reward)
+                dones.append(done)
+
                 stats.add_stats(self._env_run_indices[env_index], reward)
+
                 if done:
                     # Start a new trajectory
-                    trajectories[env_index] = trajectory_batch.add_trajectory(
-                        self._training_envs[env_index].reset())
+                    self._training_envs[env_index].reset()
+
                     # Allocate a new run index for stats accumulation
                     self._env_run_indices[env_index] = self._next_env_run_index + 1
                     self._next_env_run_index += 1
 
+            trajectory_batch.add_transition_batch(
+                transition_index=step,
+                observation=observation_batch,
+                action=action_batch,
+                reward=rewards,
+                done=dones,
+                metadata=metadata_batch,
+            )
+
         return trajectory_batch, stats
 
     @abc.abstractmethod
-    def _run_night(self, agent, daytime_trajectories):
+    def _run_night(self, agent, collected_trajectories):
         pass
 
     @staticmethod
@@ -100,7 +96,5 @@ class OnPolicyTrainer(Trainer):
         super(OnPolicyTrainer, self).__init__(**kwargs)
         self._batch_size = batch_size
 
-    def _run_night(self, agent, daytime_trajectories):
-        for _ in range(self.num_night_steps):
-            batch = daytime_trajectories.sample_subbatch(self._batch_size)
-            agent.train_on_batch(batch)
+    def _run_night(self, agent, collected_trajectories):
+        agent.train_on_batch(collected_trajectories)
