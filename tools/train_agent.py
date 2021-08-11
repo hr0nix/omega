@@ -17,7 +17,7 @@ from omega.utils.jax import disable_jit_if_no_gpu
 
 
 def env_factory():
-    return gym.make("NetHackScore-v0")
+    return gym.make("NetHackScore-v0", observation_keys=['glyphs'])
 
 
 def load_config(filename):
@@ -32,7 +32,6 @@ def main(args):
     agent = NethackTransformerAgent(env.observation_space, env.action_space, config=config['model_config'])
     trainer = OnPolicyTrainer(
         env_factory=env_factory,
-        batch_size=config['batch_size'],
         num_parallel_envs=config['num_parallel_envs'],
         num_collection_steps=config['num_collection_steps'],
     )

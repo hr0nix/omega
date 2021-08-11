@@ -92,9 +92,5 @@ class Trainer(abc.ABC):
 
 
 class OnPolicyTrainer(Trainer):
-    def __init__(self, batch_size, **kwargs):
-        super(OnPolicyTrainer, self).__init__(**kwargs)
-        self._batch_size = batch_size
-
     def _run_night(self, agent, collected_trajectories):
         agent.train_on_batch(collected_trajectories)
