@@ -28,7 +28,7 @@ class EvaluationStats(object):
         reward_sum = sum(rs.total_reward for rs in self._per_run_stats.values())
 
         return {
-            'episodes': num_episodes,
+            'timestamps_per_episode': float(num_steps) / num_episodes,
             'reward_per_episode': reward_sum / num_episodes,
             'reward_per_step': reward_sum / num_steps,
         }
@@ -38,6 +38,6 @@ class EvaluationStats(object):
         title = title or 'Evaluation summary:'
 
         print(title, flush=True)
-        print('  Episodes: {}'.format(stats['episodes']), flush=True)
+        print('  Timestamps per episode: {}'.format(stats['timestamps_per_episode']), flush=True)
         print('  Per-episode avg reward: {}'.format(stats['reward_per_episode']), flush=True)
         print('  Per-step avg reward: {}'.format(stats['reward_per_step']), flush=True)
