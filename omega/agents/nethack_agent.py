@@ -121,6 +121,7 @@ class NethackPerceiverModel(nn.Module):
 class NethackTransformerAgent(TrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'value_function_loss_weight': 1.0,
+        'entropy_regularizer_weight': 0.0,
         'lr': 1e-3,
         'discount_factor': 0.99,
         'gae_lambda': 0.95,
@@ -203,17 +204,21 @@ class NethackTransformerAgent(TrainableAgentBase):
 
                 discounts = done * self._config['discount_factor']
 
-                # We ignore last reward as we don't have value function for the next state
+                # We ignore last action/reward as we don't have value function for the next state
                 advantage = rlax.truncated_generalized_advantage_estimation(
                     rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values,
                     stop_target_gradients=False,  # This expression can be optimized wrt state values
                 )
+                timestamp_weights = jnp.ones_like(advantage)
                 policy_gradient_loss = rlax.policy_gradient_loss(
-                    log_action_probs[:-1], actions[:-1], advantage, jnp.ones_like(advantage),
+                    log_action_probs[:-1], actions[:-1], advantage, timestamp_weights,
                     use_stop_gradient=True,  # Block gradient into advantages
                 )
                 value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(0.5 * advantage ** 2)
-                return policy_gradient_loss + value_function_loss
+                entropy_regularizer = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
+                    log_action_probs[:-1], timestamp_weights)
+
+                return policy_gradient_loss + value_function_loss + entropy_regularizer
 
             batch_loss = jax.vmap(per_trajectory_loss, in_axes=0)
             batch_loss_value = batch_loss(
