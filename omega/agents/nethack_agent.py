@@ -24,6 +24,7 @@ class NethackPerceiverModel(nn.Module):
     glyph_embedding_dim: int = 64
     num_memory_units: int = 128
     memory_dim: int = 64
+    num_bl_stats_blocks: int = 2
     num_perceiver_blocks: int = 2
     num_perceiver_self_attention_subblocks: int = 2
     transformer_dropout: float = 0.1
@@ -71,6 +72,9 @@ class NethackPerceiverModel(nn.Module):
             )
             for block_idx in range(self.num_perceiver_blocks)
         ]
+        self._bl_stats_network = DenseNet(
+            num_blocks=self.num_bl_stats_blocks, dim=self.memory_dim, output_dim=self.memory_dim,
+        )
         self._policy_network = DenseNet(
             num_blocks=self.num_policy_network_blocks, dim=self.memory_dim, output_dim=self.num_actions,
         )
@@ -86,9 +90,14 @@ class NethackPerceiverModel(nn.Module):
         glyphs = observations_batch['glyphs']
         batch_size = glyphs.shape[0]
 
+        bl_stats = observations_batch['blstats']
+        bl_stats = self._bl_stats_network(bl_stats)
+
         memory_indices = jnp.arange(0, self.num_memory_units, dtype=jnp.int32)
         memory = self._memory_embedding(memory_indices)  # TODO: add memory recurrence
         memory = jnp.tile(memory, reps=[batch_size, 1, 1])
+
+        memory = memory + jnp.expand_dims(bl_stats, axis=1)  # Add global features to every memory cell
 
         glyphs = jnp.reshape(glyphs, newshape=(glyphs.shape[0], -1))
         glyphs_embeddings = self._glyph_embedding(glyphs)
@@ -143,10 +152,11 @@ class NethackTransformerAgent(TrainableAgentBase):
 
     def _build_model(self):
         observations_batch = {
-            'glyphs': jnp.zeros(
-                shape=(1, nle.nethack.DUNGEON_SHAPE[0], nle.nethack.DUNGEON_SHAPE[1]),
-                dtype=jnp.int32
+            key: jnp.zeros(
+                shape=(1,) + desc.shape,
+                dtype=desc.dtype
             )
+            for key, desc in self.observation_space.spaces.items()
         }
         return self._build_model_for_batch(observations_batch)
 
