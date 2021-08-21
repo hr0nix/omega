@@ -203,7 +203,6 @@ class NethackTransformerAgent(TrainableAgentBase):
             'log_action_probs': log_action_probs,
             'state_values': state_values,
         }
-        # TODO: we need some form of exploration or policy entropy regularization
         selected_actions = jax.random.categorical(rng2, log_action_probs)
         return selected_actions, metadata
 
