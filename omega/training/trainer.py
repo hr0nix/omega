@@ -1,6 +1,7 @@
 import abc
 
 import jax.numpy as jnp
+import numpy as np
 
 from ..training.env_wrapper import EnvWrapper
 from ..utils.profiling import timeit
@@ -35,19 +36,23 @@ class Trainer(abc.ABC):
         return stats
 
     def _run_day(self, agent, stats=None):
+        num_training_envs = len(self._training_envs)
+
         stats = stats or EvaluationStats()
         trajectory_batch = TrajectoryBatch(
-            num_trajectories=len(self._training_envs), num_transitions=self.num_collection_steps)
+            num_trajectories=num_training_envs, num_transitions=self.num_collection_steps)
+
+        reward_batch = np.zeros(shape=(num_training_envs,), dtype=np.float)
+        done_batch = np.zeros(shape=(num_training_envs,), dtype=np.bool_)
 
         for step in range(self.num_collection_steps):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
             action_batch, metadata_batch = agent.act(observation_batch)
-            rewards, dones = [], []
 
-            for env_index in range(len(self._training_envs)):
+            for env_index in range(num_training_envs):
                 obs_after, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
-                rewards.append(reward)
-                dones.append(done)
+                reward_batch[env_index] = reward
+                done_batch[env_index] = done
 
                 stats.add_stats(self._env_run_indices[env_index], reward)
 
@@ -61,11 +66,13 @@ class Trainer(abc.ABC):
 
             trajectory_batch.add_transition_batch(
                 transition_index=step,
-                observation=observation_batch,
-                action=action_batch,
-                reward=rewards,
-                done=dones,
-                metadata=metadata_batch,
+                pytree=dict(
+                    observations=observation_batch,
+                    actions=action_batch,
+                    rewards=reward_batch,
+                    done=done_batch,
+                    metadata=metadata_batch,
+                )
             )
 
         return trajectory_batch, stats

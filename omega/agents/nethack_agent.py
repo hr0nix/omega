@@ -250,4 +250,4 @@ class NethackTransformerAgent(TrainableAgentBase):
         return self._forward_step(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
-        self._train_state = self._train_step(self._train_state, trajectory_batch.to_dict(), self._next_random_key())
+        self._train_state = self._train_step(self._train_state, trajectory_batch.buffer, self._next_random_key())
