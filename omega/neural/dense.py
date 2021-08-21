@@ -29,6 +29,9 @@ class DenseNet(nn.Module):
             )
             for block_idx in range(self.num_blocks)
         ]
+        self._final_norm = nn.LayerNorm(
+            name='{}/final_norm'.format(self.name)
+        )
 
     def _activation(self, input):
         if self.activation == 'relu':
@@ -40,8 +43,9 @@ class DenseNet(nn.Module):
         t = self._input_dense(input)
         for block_idx in range(self.num_blocks):
             t_prev = t
-            t = self._norm[block_idx](t)
             t = self._dense[block_idx](t)
             t = self._activation(t)
+            t = self._norm[block_idx](t)
             t += t_prev
+        t = self._final_norm(t)
         return self._output_dense(t)
