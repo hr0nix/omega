@@ -17,6 +17,7 @@ import nle.nethack
 from ..utils.profiling import timeit
 from .trainable_agent import TrainableAgentBase
 from ..neural import TransformerNet, CrossTransformerNet, DenseNet
+from ..neural.optimization import clip_gradient_by_norm
 
 
 class NethackPerceiverModel(nn.Module):
@@ -134,6 +135,7 @@ class NethackTransformerAgent(TrainableAgentBase):
         'lr': 1e-3,
         'discount_factor': 0.99,
         'gae_lambda': 0.95,
+        'gradient_clipnorm': None,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -239,6 +241,10 @@ class NethackTransformerAgent(TrainableAgentBase):
 
         loss_function_grad = jax.grad(loss_function)
         grads = loss_function_grad(train_state.params, rng=rng)
+
+        if self._config['gradient_clipnorm'] is not None:
+            grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
+
         return train_state.apply_gradients(grads=grads)
 
     def act(self, observation_batch):
