@@ -15,6 +15,7 @@ import nle.nethack
 
 
 from ..utils.profiling import timeit
+from ..utils.pytree import dict_update
 from .trainable_agent import TrainableAgentBase
 from ..neural import TransformerNet, CrossTransformerNet, DenseNet
 from ..neural.optimization import clip_gradient_by_norm
@@ -136,6 +137,9 @@ class NethackTransformerAgent(TrainableAgentBase):
         'discount_factor': 0.99,
         'gae_lambda': 0.95,
         'gradient_clipnorm': None,
+        'num_minibatches_per_train_step': 100,
+        'minibatch_size': 64,
+        'ppo_eps': 0.25,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -207,36 +211,31 @@ class NethackTransformerAgent(TrainableAgentBase):
         return selected_actions, metadata
 
     @partial(jax.jit, static_argnums=(0,))
-    def _train_step(self, train_state, trajectory_batch, rng):
+    def _train_on_minibatch(self, train_state, trajectory_minibatch, rng):
         def loss_function(params, rng):
-            def per_trajectory_loss(observations, actions, rewards, done):
-                log_action_probs, state_values = train_state.apply_fn(
-                    params, observations, deterministic=False, rng=rng)
+            log_action_probs, state_values = train_state.apply_fn(
+                params, trajectory_minibatch['observations'], deterministic=False, rng=rng)
 
-                discounts = done * self._config['discount_factor']
+            minibatch_range = jnp.arange(0, log_action_probs.shape[0])
+            log_sampled_action_probs = log_action_probs[minibatch_range, trajectory_minibatch['actions']]
+            log_sampled_prev_action_probs = trajectory_minibatch['metadata']['log_action_probs'][
+                minibatch_range, trajectory_minibatch['actions']]
+            action_prob_ratio = jnp.exp(log_sampled_action_probs - log_sampled_prev_action_probs)
+            actor_loss_1 = -action_prob_ratio * trajectory_minibatch['advantage']
+            actor_loss_2 = -jnp.clip(
+                action_prob_ratio,
+                1.0 - self._config['ppo_eps'],
+                1.0 + self._config['ppo_eps'],
+            ) * trajectory_minibatch['advantage']
+            ppo_loss = jnp.maximum(actor_loss_1, actor_loss_2).mean()
 
-                # We ignore last action/reward as we don't have value function for the next state
-                advantage = rlax.truncated_generalized_advantage_estimation(
-                    rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values,
-                    stop_target_gradients=False,  # This expression can be optimized wrt state values
-                )
-                timestamp_weights = jnp.ones_like(advantage)
-                policy_gradient_loss = rlax.policy_gradient_loss(
-                    log_action_probs[:-1], actions[:-1], advantage, timestamp_weights,
-                    use_stop_gradient=True,  # Block gradient into advantages
-                )
-                value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(0.5 * advantage ** 2)
-                entropy_regularizer = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
-                    log_action_probs[:-1], timestamp_weights)
+            value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(
+                0.5 * (state_values - trajectory_minibatch['value_targets']) ** 2)
 
-                return policy_gradient_loss + value_function_loss + entropy_regularizer
+            entropy_regularizer = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
+                log_action_probs, jnp.ones_like(trajectory_minibatch['advantage']))
 
-            batch_loss = jax.vmap(per_trajectory_loss, in_axes=0)
-            batch_loss_value = batch_loss(
-                trajectory_batch['observations'], trajectory_batch['actions'],
-                trajectory_batch['rewards'], trajectory_batch['done']
-            )
-            return jnp.mean(batch_loss_value)
+            return ppo_loss + value_function_loss + entropy_regularizer
 
         loss_function_grad = jax.grad(loss_function)
         grads = loss_function_grad(train_state.params, rng=rng)
@@ -245,6 +244,52 @@ class NethackTransformerAgent(TrainableAgentBase):
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
 
         return train_state.apply_gradients(grads=grads)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _sample_minibatch(self, trajectory_batch, rng):
+        key1, key2 = jax.random.split(rng)
+
+        minibatch_size = self._config['minibatch_size']
+        some_tensor = jax.tree_leaves(trajectory_batch)[0]
+        num_trajectories = some_tensor.shape[0]
+        num_timestamps = some_tensor.shape[1]
+
+        trajectory_indices = jax.random.randint(key1, (minibatch_size,), 0, num_trajectories)
+        timestamp_indices = jax.random.randint(key2, (minibatch_size,), 0, num_timestamps)
+
+        # Note that we replace trajectory and timestamp dimensions by minibatch dimension here
+        return jax.tree_map(
+            lambda leaf: leaf[trajectory_indices, timestamp_indices, ...],
+            trajectory_batch,
+        )
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _compute_advantage_and_value_targets(self, trajectory_batch):
+        def per_trajectory_advantage(rewards, discounts, state_values):
+            return rlax.truncated_generalized_advantage_estimation(
+                rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values)
+
+        per_batch_advantage = jax.vmap(per_trajectory_advantage, in_axes=0)
+        discounts = trajectory_batch['done'] * self._config['discount_factor']
+        advantage = per_batch_advantage(
+            trajectory_batch['rewards'], discounts, trajectory_batch['metadata']['state_values'])
+        value_targets = advantage + trajectory_batch['metadata']['state_values'][:, :-1]
+        return advantage, value_targets
+
+    def _train_step(self, train_state, trajectory_batch, rng):
+        advantage, value_targets = self._compute_advantage_and_value_targets(trajectory_batch)
+        # Get rid of states we don't have GAE estimates for
+        trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
+        trajectory_batch = dict_update(trajectory_batch, {
+            'advantage': advantage,
+            'value_targets': value_targets,
+        })
+        for _ in range(self._config['num_minibatches_per_train_step']):
+            rng, subkey1, subkey2 = jax.random.split(rng, 3)
+            trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
+            train_state = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
+
+        return train_state
 
     def act(self, observation_batch):
         return self._forward_step(self._train_state, observation_batch, self._next_random_key())

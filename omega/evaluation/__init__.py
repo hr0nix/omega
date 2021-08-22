@@ -1,1 +1,1 @@
-from .eval_stats import EvaluationStats, PerRunStats
+from .eval_stats import EvaluationStats, TrajectoryStats

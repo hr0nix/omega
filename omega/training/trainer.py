@@ -54,7 +54,7 @@ class Trainer(abc.ABC):
                 reward_batch[env_index] = reward
                 done_batch[env_index] = done
 
-                stats.add_stats(self._env_run_indices[env_index], reward)
+                stats.add_transition(self._env_run_indices[env_index], action_batch[env_index], reward, done)
 
                 if done:
                     # Start a new trajectory
