@@ -4,6 +4,7 @@ import tqdm
 
 import gym
 import nle
+import minihack
 
 import clu.metric_writers
 
@@ -17,7 +18,7 @@ from omega.utils.jax import disable_jit_if_no_gpu
 
 
 def env_factory():
-    return gym.make("NetHackScore-v0", observation_keys=['glyphs', 'blstats'])
+    return gym.make("MiniHack-KeyRoom-Fixed-S5-v0", observation_keys=['glyphs', 'blstats'])
 
 
 def load_config(filename):
