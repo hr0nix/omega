@@ -9,4 +9,4 @@ COPY ./requirements.txt /omega
 
 RUN pip install -r /omega/requirements.txt --find-links https://storage.googleapis.com/jax-releases/jax_releases.html
 
-
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda-11.1/compat/
