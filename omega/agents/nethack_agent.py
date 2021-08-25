@@ -212,7 +212,7 @@ class NethackTransformerAgent(TrainableAgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def _train_on_minibatch(self, train_state, trajectory_minibatch, rng):
-        def loss_function(params, rng):
+        def loss_function(params, train_state, trajectory_minibatch, rng):
             log_action_probs, state_values = train_state.apply_fn(
                 params, trajectory_minibatch['observations'], deterministic=False, rng=rng)
 
@@ -232,13 +232,13 @@ class NethackTransformerAgent(TrainableAgentBase):
             value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(
                 0.5 * (state_values - trajectory_minibatch['value_targets']) ** 2)
 
-            entropy_regularizer = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
+            entropy_regularizer_loss = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
                 log_action_probs, jnp.ones_like(trajectory_minibatch['advantage']))
 
-            return ppo_loss + value_function_loss + entropy_regularizer
+            return ppo_loss + value_function_loss + entropy_regularizer_loss
 
-        loss_function_grad = jax.grad(loss_function)
-        grads = loss_function_grad(train_state.params, rng=rng)
+        loss_function_grad = jax.grad(loss_function, argnums=0)
+        grads = loss_function_grad(train_state.params, train_state, trajectory_minibatch, rng)
 
         if self._config['gradient_clipnorm'] is not None:
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
