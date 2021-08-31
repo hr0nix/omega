@@ -54,7 +54,6 @@ def main(args):
             if log_writer is not None:
                 log_writer.write_scalars(day, stats.to_dict())
             stats.print_summary(title='After {} days:'.format(day + 1))
-            stats.reset()
 
             if args.checkpoints is not None:
                 agent.save_to_checkpoint(args.checkpoints, day)
