@@ -17,8 +17,8 @@ from omega.evaluation import EvaluationStats
 from omega.utils.jax import disable_jit_if_no_gpu
 
 
-def env_factory():
-    return gym.make("MiniHack-KeyRoom-Fixed-S5-v0", observation_keys=['glyphs', 'blstats'])
+def make_env(game_logs_dir):
+    return gym.make("MiniHack-Room-5x5-v0", observation_keys=['glyphs', 'blstats'], savedir=game_logs_dir)
 
 
 def load_config(filename):
@@ -29,6 +29,7 @@ def load_config(filename):
 def main(args):
     config = load_config(args.config)
 
+    env_factory = lambda: make_env(game_logs_dir=args.game_logs)
     env = env_factory()
     agent = NethackTransformerAgent(env.observation_space, env.action_space, config=config['model_config'])
     trainer = OnPolicyTrainer(
@@ -52,7 +53,7 @@ def main(args):
 
         if (day + 1) % config['epoch_every_num_days'] == 0:
             if log_writer is not None:
-                log_writer.write_scalars(day, stats.to_dict())
+                log_writer.write_scalars(day, stats.to_dict(include_rolling_stats=True, include_non_scalar_stats=False))
             stats.print_summary(title='After {} days:'.format(day + 1))
 
             if args.checkpoints is not None:
@@ -64,6 +65,7 @@ def parse_args():
     parser.add_argument('--config', metavar='FILE', required=True)
     parser.add_argument('--tb-logs', metavar='DIR', required=False)
     parser.add_argument('--checkpoints', metavar='DIR', required=False)
+    parser.add_argument('--game-logs', metavar='DIR', required=False)
     return parser.parse_args()
 
 

@@ -24,11 +24,29 @@ class FinishedEpisodeStats(object):
     num_steps: Optional[int] = None
 
 
+class ExponentialSmoother(object):
+    def __init__(self, smoothing):
+        self._value = 0.0
+        self._smoothing = smoothing
+
+    def add(self, value):
+        self._value = self._smoothing * self._value + (1.0 - self._smoothing) * value
+
+    @property
+    def smoothed_value(self):
+        return self._value
+
+
 class EvaluationStats(object):
-    def __init__(self):
+    def __init__(self, rolling_stats_smoothing=0.9):
+        self._rolling_stats = defaultdict(lambda: ExponentialSmoother(smoothing=rolling_stats_smoothing))
         self._running_episode_stats = defaultdict(RunningEpisodeStats)
         self._finished_episodes = set()
         self._finished_episode_stats = list()
+
+    def add_rolling_stats(self, values_dict):
+        for key, value in values_dict.items():
+            self._rolling_stats[key].add(value)
 
     def add_transition(self, episode_index, action, reward, done):
         if episode_index is self._finished_episodes:
@@ -67,11 +85,13 @@ class EvaluationStats(object):
 
         self._finished_episode_stats.append(final_stats)
 
-    def to_dict(self, include_non_scalar_stats=False):
+    def to_dict(self, include_non_scalar_stats=False, include_rolling_stats=False):
         if len(self._finished_episode_stats) == 0:
             return dict()
 
         result = {
+            'total_steps': sum(s.num_steps for s in self._finished_episode_stats),
+            'total_finished_episodes': len(self._finished_episode_stats),
             'last_episode_total_reward': self._finished_episode_stats[-1].reward_sum,
             'last_episode_steps': self._finished_episode_stats[-1].num_steps,
             'last_episode_min_reward': self._finished_episode_stats[-1].min_reward,
@@ -80,11 +100,16 @@ class EvaluationStats(object):
             'last_episode_reward_p75': self._finished_episode_stats[-1].reward_p75,
             'last_episode_reward_p95': self._finished_episode_stats[-1].reward_p95,
             'last_episode_reward_p99': self._finished_episode_stats[-1].reward_p99,
-            'last_10_episode_avg_reward': np.mean([s.reward_sum for s in self._finished_episode_stats[-10:]])
+            'last_100_episode_avg_reward': np.mean([s.reward_sum for s in self._finished_episode_stats[-100:]])
         }
         if include_non_scalar_stats:
             result.update({
                 'last_episode_top_5_actions': self._finished_episode_stats[-1].top_5_actions
+            })
+        if include_rolling_stats:
+            result.update({
+                key: value.smoothed_value
+                for key, value in self._rolling_stats.items()
             })
         return result
 
@@ -93,11 +118,13 @@ class EvaluationStats(object):
             print('No finished episodes recorded yet.')
             return
 
-        stats = self.to_dict(include_non_scalar_stats=True)
+        stats = self.to_dict(include_non_scalar_stats=True, include_rolling_stats=False)
         title = title or 'Evaluation summary:'
 
         print(title, flush=True)
         for key_title, key in [
+            ('Total steps', 'total_steps'),
+            ('Total finished episodes', 'total_finished_episodes'),
             ('Last episode total reward', 'last_episode_total_reward'),
             ('Last episode steps', 'last_episode_steps'),
             ('Last episode min reward', 'last_episode_min_reward'),
@@ -106,7 +133,8 @@ class EvaluationStats(object):
             ('Last episode reward 75%', 'last_episode_reward_p75'),
             ('Last episode reward 95%', 'last_episode_reward_p95'),
             ('Last episode reward 99%', 'last_episode_reward_p99'),
-            ('Last 10 episodes avg reward', 'last_10_episode_avg_reward'),
+            ('Last episode top-5 actions', 'last_episode_top_5_actions'),
+            ('Last 100 episodes avg reward', 'last_100_episode_avg_reward'),
         ]:
             print('  {}: {}'.format(key_title, stats[key]), flush=True)
 

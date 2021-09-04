@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jax.random
 import optax
 import rlax
+from rlax._src import distributions
 
 import nle.nethack
 
@@ -148,7 +149,7 @@ class NethackTransformerAgent(TrainableAgentBase):
     def __init__(self, *args, config=None, **kwargs):
         super(NethackTransformerAgent, self).__init__(*args, **kwargs)
 
-        self._random_key = jax.random.PRNGKey(0)
+        self._random_key = jax.random.PRNGKey(31337)
         self._config = self.CONFIG.copy(config or {})
         self._model, self._train_state = self._build_model()
 
@@ -171,7 +172,7 @@ class NethackTransformerAgent(TrainableAgentBase):
         model_params = model.init(
             self._next_random_key(), observations_batch, deterministic=False, rng=self._next_random_key())
 
-        optimizer = optax.adam(learning_rate=self._config['lr'])
+        optimizer = optax.rmsprop(learning_rate=self._config['lr'])
 
         train_state = self.TrainState.create(apply_fn=model.apply, params=model_params, tx=optimizer)
 
@@ -235,15 +236,19 @@ class NethackTransformerAgent(TrainableAgentBase):
             entropy_regularizer_loss = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
                 log_action_probs, jnp.ones_like(trajectory_minibatch['advantage']))
 
-            return ppo_loss + value_function_loss + entropy_regularizer_loss
+            return ppo_loss + value_function_loss + entropy_regularizer_loss, {
+                'ppo_loss': ppo_loss,
+                'value_function_loss': value_function_loss,
+                'entropy_regularizer_loss': entropy_regularizer_loss,
+            }
 
-        loss_function_grad = jax.grad(loss_function, argnums=0)
-        grads = loss_function_grad(train_state.params, train_state, trajectory_minibatch, rng)
+        grad_and_stats = jax.grad(loss_function, argnums=0, has_aux=True)
+        grads, stats = grad_and_stats(train_state.params, train_state, trajectory_minibatch, rng)
 
         if self._config['gradient_clipnorm'] is not None:
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
 
-        return train_state.apply_gradients(grads=grads)
+        return train_state.apply_gradients(grads=grads), stats
 
     @partial(jax.jit, static_argnums=(0,))
     def _sample_minibatch(self, trajectory_batch, rng):
@@ -284,15 +289,31 @@ class NethackTransformerAgent(TrainableAgentBase):
             'advantage': advantage,
             'value_targets': value_targets,
         })
+        train_stats_sum = None
         for _ in range(self._config['num_minibatches_per_train_step']):
             rng, subkey1, subkey2 = jax.random.split(rng, 3)
             trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
-            train_state = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
+            train_state, train_stats = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
+            train_stats_sum = train_stats if train_stats_sum is None else jax.lax.add(train_stats_sum, train_stats)
 
-        return train_state
+        # TODO: jit stats computation?
+        stats = {
+            'state_value': jnp.mean(trajectory_batch['metadata']['state_values']),
+            'advantage': jnp.mean(trajectory_batch['advantage']),
+            'value_target': jnp.mean(trajectory_batch['value_targets']),
+            'policy_entropy': jnp.mean(
+                distributions.softmax().entropy(trajectory_batch['metadata']['log_action_probs']))
+        }
+        stats = dict_update(stats, {
+            k: v / self._config['num_minibatches_per_train_step']
+            for k, v in train_stats_sum.items()
+        })
+
+        return train_state, stats
 
     def act(self, observation_batch):
         return self._forward_step(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
-        self._train_state = self._train_step(self._train_state, trajectory_batch.buffer, self._next_random_key())
+        self._train_state, stats = self._train_step(self._train_state, trajectory_batch.buffer, self._next_random_key())
+        return stats

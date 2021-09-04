@@ -31,14 +31,12 @@ class Trainer(abc.ABC):
         return self._num_collection_steps
 
     def run_training_step(self, agent, stats=None):
-        trajectory_batch, stats = self._run_day(agent, stats)
-        self._run_night(agent, trajectory_batch)
-        return stats
+        trajectory_batch = self._run_day(agent, stats)
+        self._run_night(agent, stats, trajectory_batch)
 
-    def _run_day(self, agent, stats=None):
+    def _run_day(self, agent, stats):
         num_training_envs = len(self._training_envs)
 
-        stats = stats or EvaluationStats()
         trajectory_batch = TrajectoryBatch(
             num_trajectories=num_training_envs, num_transitions=self.num_collection_steps)
 
@@ -54,7 +52,8 @@ class Trainer(abc.ABC):
                 reward_batch[env_index] = reward
                 done_batch[env_index] = done
 
-                stats.add_transition(self._env_run_indices[env_index], action_batch[env_index], reward, done)
+                if stats is not None:
+                    stats.add_transition(self._env_run_indices[env_index], action_batch[env_index], reward, done)
 
                 if done:
                     # Start a new trajectory
@@ -75,10 +74,10 @@ class Trainer(abc.ABC):
                 )
             )
 
-        return trajectory_batch, stats
+        return trajectory_batch
 
     @abc.abstractmethod
-    def _run_night(self, agent, collected_trajectories):
+    def _run_night(self, agent, stats, collected_trajectories):
         pass
 
     @staticmethod
@@ -99,5 +98,6 @@ class Trainer(abc.ABC):
 
 
 class OnPolicyTrainer(Trainer):
-    def _run_night(self, agent, collected_trajectories):
-        agent.train_on_batch(collected_trajectories)
+    def _run_night(self, agent, stats, collected_trajectories):
+        training_stats = agent.train_on_batch(collected_trajectories)
+        stats.add_rolling_stats(training_stats)
