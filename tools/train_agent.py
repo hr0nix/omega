@@ -17,8 +17,14 @@ from omega.evaluation import EvaluationStats
 from omega.utils.jax import disable_jit_if_no_gpu
 
 
+from gym.envs import registration
+registration.register(
+    id='MiniHack-Room-Random-5x5-fixed-v0',
+    entry_point='minihack.envs.room:MiniHackRoom5x5Random',
+)
+
 def make_env(game_logs_dir):
-    return gym.make("MiniHack-Room-5x5-v0", observation_keys=['glyphs', 'blstats'], savedir=game_logs_dir)
+    return gym.make('MiniHack-Room-Random-5x5-fixed-v0', observation_keys=['glyphs', 'blstats'], savedir=game_logs_dir)
 
 
 def load_config(filename):
