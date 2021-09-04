@@ -141,6 +141,7 @@ class NethackTransformerAgent(TrainableAgentBase):
         'num_minibatches_per_train_step': 100,
         'minibatch_size': 64,
         'ppo_eps': 0.25,
+        'perceiver_config': {}
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -168,7 +169,7 @@ class NethackTransformerAgent(TrainableAgentBase):
         return self._build_model_for_batch(observations_batch)
 
     def _build_model_for_batch(self, observations_batch):
-        model = NethackPerceiverModel(num_actions=self.action_space.n)
+        model = NethackPerceiverModel(num_actions=self.action_space.n, **self._config['perceiver_config'])
         model_params = model.init(
             self._next_random_key(), observations_batch, deterministic=False, rng=self._next_random_key())
 
@@ -294,7 +295,8 @@ class NethackTransformerAgent(TrainableAgentBase):
             rng, subkey1, subkey2 = jax.random.split(rng, 3)
             trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
             train_state, train_stats = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
-            train_stats_sum = train_stats if train_stats_sum is None else jax.lax.add(train_stats_sum, train_stats)
+            train_stats_sum = train_stats if train_stats_sum is None else jax.tree_map(
+                jnp.add, train_stats_sum, train_stats)
 
         # TODO: jit stats computation?
         stats = {
