@@ -43,6 +43,7 @@ class EvaluationStats(object):
         self._running_episode_stats = defaultdict(RunningEpisodeStats)
         self._finished_episodes = set()
         self._finished_episode_stats = list()
+        self._total_steps = 0
 
     def add_rolling_stats(self, values_dict):
         for key, value in values_dict.items():
@@ -64,8 +65,9 @@ class EvaluationStats(object):
 
         if done:
             self._finished_episodes.add(episode_index)
-            self._finalize_episode_stats(stats)
+            final_stats = self._finalize_episode_stats(stats)
             del self._running_episode_stats[episode_index]
+            self._total_steps += final_stats.num_steps
 
     def _finalize_episode_stats(self, stats):
         sorted_rewards = list(stats.rewards)
@@ -85,12 +87,14 @@ class EvaluationStats(object):
 
         self._finished_episode_stats.append(final_stats)
 
+        return final_stats
+
     def to_dict(self, include_non_scalar_stats=False, include_rolling_stats=False):
         if len(self._finished_episode_stats) == 0:
             return dict()
 
         result = {
-            'total_steps': sum(s.num_steps for s in self._finished_episode_stats),
+            'total_steps': self._total_steps,
             'total_finished_episodes': len(self._finished_episode_stats),
             'last_episode_total_reward': self._finished_episode_stats[-1].reward_sum,
             'last_episode_steps': self._finished_episode_stats[-1].num_steps,
