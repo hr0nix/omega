@@ -23,8 +23,13 @@ registration.register(
     entry_point='minihack.envs.room:MiniHackRoom5x5Random',
 )
 
+
 def make_env(game_logs_dir):
-    return gym.make('MiniHack-Room-Random-5x5-fixed-v0', observation_keys=['glyphs', 'blstats'], savedir=game_logs_dir)
+    return gym.make(
+        'MiniHack-Room-Random-5x5-fixed-v0',
+        observation_keys=['glyphs', 'blstats'],
+        savedir=game_logs_dir
+    )
 
 
 def load_config(filename):
@@ -59,7 +64,10 @@ def main(args):
 
         if (day + 1) % config['epoch_every_num_days'] == 0:
             if log_writer is not None:
-                log_writer.write_scalars(day, stats.to_dict(include_rolling_stats=True, include_non_scalar_stats=False))
+                log_writer.write_scalars(
+                    day,
+                    stats.to_dict(include_rolling_stats=True, include_non_scalar_stats=False)
+                )
             stats.print_summary(title='After {} days:'.format(day + 1))
 
             if args.checkpoints is not None:
