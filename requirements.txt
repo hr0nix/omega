@@ -6,8 +6,8 @@ rlax~=0.0.4
 attrs~=21.2.0
 gym~=0.18.3
 nle~=0.7.3
+minihack~=0.1.1
 clu~=0.0.4
 dataclasses~=0.6
 PyYAML~=5.4.1
 tqdm~=4.62.0
-git+https://github.com/MiniHackPlanet/MiniHack.git@e9c8c20fb2449d1f87163314f9b3617cf4f0e088
