@@ -3,7 +3,6 @@ import yaml
 import tqdm
 
 import gym
-import nle
 import minihack
 
 import clu.metric_writers
@@ -14,21 +13,22 @@ logging.set_verbosity(logging.INFO)
 from omega.agents import RandomAgent, NethackTransformerAgent
 from omega.training import OnPolicyTrainer
 from omega.evaluation import EvaluationStats
+from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
 
 
-from gym.envs import registration
-registration.register(
-    id='MiniHack-Room-Random-5x5-fixed-v0',
-    entry_point='minihack.envs.room:MiniHackRoom5x5Random',
-)
+def make_env(game_logs_dir, use_dense_reward):
+    reward_manager = None
+    if use_dense_reward:
+        reward_manager = minihack.RewardManager()
+        reward_manager.add_location_event('staircase', terminal_required=True)
+        reward_manager.add_custom_reward_fn(distance_to_staircase_reward)
 
-
-def make_env(game_logs_dir):
     return gym.make(
-        'MiniHack-Room-Random-5x5-fixed-v0',
+        'MiniHack-Room-Random-5x5-v0',
         observation_keys=['glyphs', 'blstats'],
-        savedir=game_logs_dir
+        savedir=game_logs_dir,
+        reward_manager=reward_manager,
     )
 
 
@@ -40,7 +40,7 @@ def load_config(filename):
 def main(args):
     config = load_config(args.config)
 
-    env_factory = lambda: make_env(game_logs_dir=args.game_logs)
+    env_factory = lambda: make_env(game_logs_dir=args.game_logs, use_dense_reward=config['use_dense_reward'])
     env = env_factory()
     agent = NethackTransformerAgent(env.observation_space, env.action_space, config=config['model_config'])
     trainer = OnPolicyTrainer(
