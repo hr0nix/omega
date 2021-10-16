@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-docker run --gpus all -it --env PYTHONPATH=/omega --mount type=bind,source=$(pwd)/../,target=/omega hr0nix/omega_env:1.2 /bin/bash
+docker run --gpus all -it --env PYTHONPATH=/omega --env OMEGA_EXPERIMENTS_DIR=/omega/experiments --mount type=bind,source=$(dirname $0)/../,target=/omega hr0nix/omega_env:1.3 /bin/bash
