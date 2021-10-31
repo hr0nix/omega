@@ -317,7 +317,7 @@ class NethackTransformerAgent(TrainableAgentBase):
                 rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values)
 
         per_batch_advantage = jax.vmap(per_trajectory_advantage, in_axes=0)
-        discounts = trajectory_batch['done'] * self._config['discount_factor']
+        discounts = (1.0 - trajectory_batch['done']) * self._config['discount_factor']
         advantage = per_batch_advantage(
             trajectory_batch['rewards'], discounts, trajectory_batch['metadata']['state_values'])
         value_targets = advantage + trajectory_batch['metadata']['state_values'][:, :-1]
