@@ -66,7 +66,7 @@ def main(args):
             if log_writer is not None:
                 log_writer.write_scalars(
                     day,
-                    stats.to_dict(include_rolling_stats=True, include_non_scalar_stats=False)
+                    stats.to_dict(include_rolling_stats=True)
                 )
             stats.print_summary(title='After {} days:'.format(day + 1))
 
