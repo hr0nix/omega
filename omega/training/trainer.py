@@ -1,12 +1,12 @@
 import abc
+from functools import partial
 
-import jax.numpy as jnp
+import jax
 import numpy as np
 
 from ..training.env_wrapper import EnvWrapper
-from ..utils.profiling import timeit
+from ..utils.pytree import stack
 from .trajectory import TrajectoryBatch
-from ..evaluation import EvaluationStats
 
 
 class Trainer(abc.ABC):
@@ -47,6 +47,7 @@ class Trainer(abc.ABC):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
             action_batch, metadata_batch = agent.act(observation_batch)
 
+
             for env_index in range(num_training_envs):
                 obs_after, reward, done, info = self._training_envs[env_index].step(action_batch[env_index])
                 reward_batch[env_index] = reward
@@ -80,21 +81,9 @@ class Trainer(abc.ABC):
     def _run_night(self, agent, stats, collected_trajectories):
         pass
 
-    @staticmethod
-    def _batch_tensors(tensor_dicts):
-        assert len(tensor_dicts) > 0
-        tensor_keys = tensor_dicts[0].keys()
-        assert all(td.keys() == tensor_keys for td in tensor_dicts)
-        assert all(
-            td[key].shape == tensor_dicts[0][key].shape
-            for key in tensor_keys
-            for td in tensor_dicts
-        )
-
-        return {
-            key: jnp.stack([td[key] for td in tensor_dicts], axis=0)
-            for key in tensor_keys
-        }
+    @partial(jax.jit, static_argnums=(0,))
+    def _batch_tensors(self, tensor_dicts):
+        return stack(tensor_dicts)
 
 
 class OnPolicyTrainer(Trainer):
