@@ -272,6 +272,7 @@ class NethackTransformerAgent(TrainableAgentBase):
             ) * trajectory_minibatch['advantage']
             ppo_loss = jnp.maximum(actor_loss_1, actor_loss_2).mean()
 
+            # TODO: Is using an off-policy value target here ok?
             value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(
                 0.5 * (state_values - trajectory_minibatch['value_targets']) ** 2)
 
@@ -321,9 +322,13 @@ class NethackTransformerAgent(TrainableAgentBase):
         advantage = per_batch_advantage(
             trajectory_batch['rewards'], discounts, trajectory_batch['metadata']['state_values'])
         value_targets = advantage + trajectory_batch['metadata']['state_values'][:, :-1]
+
+        if self._config['normalize_advantage']:
+            advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-9)
+
         return advantage, value_targets
 
-    def _train_step(self, train_state, trajectory_batch, rng):
+    def _preprocess_batch(self, trajectory_batch):
         advantage, value_targets = self._compute_advantage_and_value_targets(trajectory_batch)
         # Get rid of states we don't have GAE estimates for
         trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
@@ -331,6 +336,10 @@ class NethackTransformerAgent(TrainableAgentBase):
             'advantage': advantage,
             'value_targets': value_targets,
         })
+        return trajectory_batch
+
+    def _train_step(self, train_state, trajectory_batch, rng):
+        trajectory_batch = self._preprocess_batch(trajectory_batch)
         train_stats_sum = None
         for _ in range(self._config['num_minibatches_per_train_step']):
             rng, subkey1, subkey2 = jax.random.split(rng, 3)
