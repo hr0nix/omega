@@ -32,21 +32,20 @@ class ExponentialSmoother(object):
 
 
 class EvaluationStats(object):
+    AVERAGE_REWARD_OVER_NUM_EPISODES = 100
+
     def __init__(self, rolling_stats_smoothing=0.9):
         self._rolling_stats = defaultdict(lambda: ExponentialSmoother(smoothing=rolling_stats_smoothing))
         self._running_episode_stats = defaultdict(RunningEpisodeStats)
-        self._finished_episodes = set()
         self._finished_episode_stats = list()
         self._total_steps = 0
+        self._num_finished_episodes = 0
 
     def add_rolling_stats(self, values_dict):
         for key, value in values_dict.items():
             self._rolling_stats[key].add(value)
 
     def add_transition(self, episode_index, action, reward, done):
-        if episode_index is self._finished_episodes:
-            raise ValueError('Trying to add transition to a finished episode {}'.format(episode_index))
-
         # To handle JAX/numpy arrays which are not hashable
         if isinstance(action, (jnp.ndarray, np.ndarray)):
             if len(action.shape) > 0:
@@ -58,18 +57,20 @@ class EvaluationStats(object):
         stats.rewards.append(reward)
 
         if done:
-            self._finished_episodes.add(episode_index)
             final_stats = self._finalize_episode_stats(stats)
-            del self._running_episode_stats[episode_index]
             self._total_steps += final_stats.num_steps
+            self._num_finished_episodes += 1
+
+            del self._running_episode_stats[episode_index]
+            self._finished_episode_stats.append(final_stats)
+            # Do not remember too many stats
+            if len(self._finished_episode_stats) > self.AVERAGE_REWARD_OVER_NUM_EPISODES:
+                self._finished_episode_stats = self._finished_episode_stats[-self.AVERAGE_REWARD_OVER_NUM_EPISODES:]
 
     def _finalize_episode_stats(self, stats):
         final_stats = FinishedEpisodeStats()
         final_stats.num_steps = len(stats.rewards)
         final_stats.reward_sum = sum(stats.rewards)
-
-        self._finished_episode_stats.append(final_stats)
-
         return final_stats
 
     def to_dict(self, include_rolling_stats=False):
@@ -78,10 +79,12 @@ class EvaluationStats(object):
 
         result = {
             'total_steps': self._total_steps,
-            'total_finished_episodes': len(self._finished_episode_stats),
+            'total_finished_episodes': self._num_finished_episodes,
             'last_episode_total_reward': self._finished_episode_stats[-1].reward_sum,
             'last_episode_steps': self._finished_episode_stats[-1].num_steps,
-            'last_100_episode_avg_reward': np.mean([s.reward_sum for s in self._finished_episode_stats[-100:]])
+            'last_100_episode_avg_reward': np.mean(
+                [s.reward_sum for s in self._finished_episode_stats[-self.AVERAGE_REWARD_OVER_NUM_EPISODES:]]
+            )
         }
         if include_rolling_stats:
             result.update({
