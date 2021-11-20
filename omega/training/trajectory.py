@@ -34,7 +34,6 @@ class TrajectoryBatch(object):
 
         if self._buffer is None:
             def _create_single_buffer(tensor):
-                tensor = jnp.asarray(tensor)
                 return jnp.zeros(
                     shape=(self.num_trajectories, self.num_transitions) + tensor.shape[1:],
                     dtype=tensor.dtype

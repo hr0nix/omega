@@ -1,6 +1,7 @@
 import argparse
 import yaml
 import tqdm
+import ray
 
 import gym
 import minihack
@@ -41,13 +42,16 @@ def load_config(filename):
 def main(args):
     config = load_config(args.config)
 
+    ray.init(num_cpus=config['num_workers'])
+
     env_factory = lambda: make_env(game_logs_dir=args.game_logs, use_dense_reward=config['use_dense_reward'])
     env = env_factory()
     agent = NethackPPOAgent(
         NethackPerceiverModel, env.observation_space, env.action_space, config=config['agent_config'])
     trainer = OnPolicyTrainer(
         env_factory=env_factory,
-        num_parallel_envs=config['num_parallel_envs'],
+        num_workers=config['num_workers'],
+        num_envs=config['num_envs'],
         num_collection_steps=config['num_collection_steps'],
     )
 
