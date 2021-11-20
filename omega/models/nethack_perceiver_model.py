@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import flax.linen as nn
 import jax.numpy as jnp
@@ -11,6 +11,7 @@ from omega.neural import TransformerNet, CrossTransformerNet, DenseNet
 
 class NethackPerceiverModel(nn.Module):
     num_actions: int
+    glyph_crop_area: Optional[Tuple[int, int]] = None
     glyph_embedding_dim: int = 64
     num_memory_units: int = 128
     memory_dim: int = 64
@@ -30,9 +31,14 @@ class NethackPerceiverModel(nn.Module):
     positional_embeddings_max_freq: int = 80
 
     def setup(self):
+        if self.glyph_crop_area is not None:
+            self._glyphs_size = self.glyph_crop_area
+        else:
+            self._glyphs_size = nle.nethack.DUNGEON_SHAPE
+
         if not self.use_fixed_positional_embeddings:
             self._glyph_pos_embedding = nn.Embed(
-                num_embeddings=nle.nethack.DUNGEON_SHAPE[0] * nle.nethack.DUNGEON_SHAPE[1],
+                num_embeddings=self._glyphs_size[0] * self._glyphs_size[1],
                 features=self.glyph_embedding_dim
             )
         else:
@@ -89,8 +95,8 @@ class NethackPerceiverModel(nn.Module):
         )
         f = jnp.exp(logf)
 
-        r_coords = jnp.linspace(-1.0, 1.0, num=nle.nethack.DUNGEON_SHAPE[0])
-        c_coords = jnp.linspace(-1.0, 1.0, num=nle.nethack.DUNGEON_SHAPE[1])
+        r_coords = jnp.linspace(-1.0, 1.0, num=self._glyphs_size[0])
+        c_coords = jnp.linspace(-1.0, 1.0, num=self._glyphs_size[1])
         x_2d, y_2d = jnp.meshgrid(r_coords, c_coords, indexing='ij')
         coords = jnp.stack([x_2d, y_2d], axis=-1)
 
@@ -98,8 +104,8 @@ class NethackPerceiverModel(nn.Module):
         cfp = jnp.reshape(
             cfp,
             (
-                nle.nethack.DUNGEON_SHAPE[0],
-                nle.nethack.DUNGEON_SHAPE[1],
+                self._glyphs_size[0],
+                self._glyphs_size[1],
                 2 * self.positional_embeddings_num_bands
             )
         )
@@ -118,6 +124,11 @@ class NethackPerceiverModel(nn.Module):
         glyphs = observations_batch['glyphs']
         batch_size = glyphs.shape[0]
 
+        if self.glyph_crop_area is not None:
+            start_r = (nle.nethack.DUNGEON_SHAPE[0] - self.glyph_crop_area[0]) // 2
+            start_c = (nle.nethack.DUNGEON_SHAPE[1] - self.glyph_crop_area[1]) // 2
+            glyphs = glyphs[:, start_r:start_r + self.glyph_crop_area[0], start_c:start_c + self.glyph_crop_area[1]]
+
         memory_indices = jnp.arange(0, self.num_memory_units, dtype=jnp.int32)
         memory = self._memory_embedding(memory_indices)  # TODO: add memory recurrence
         memory = jnp.tile(memory, reps=[batch_size, 1, 1])
@@ -134,7 +145,7 @@ class NethackPerceiverModel(nn.Module):
             glyph_pos_embeddings = self._make_fixed_pos_embeddings()
         else:
             glyph_pos_indices = jnp.arange(
-                0, nle.nethack.DUNGEON_SHAPE[0] * nle.nethack.DUNGEON_SHAPE[1], dtype=jnp.int32)
+                0, self._glyphs_size[0] * self._glyphs_size[1], dtype=jnp.int32)
             glyph_pos_embeddings = self._glyph_pos_embedding(glyph_pos_indices)
         glyphs_embeddings += glyph_pos_embeddings
 
