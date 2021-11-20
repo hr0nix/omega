@@ -1,0 +1,1 @@
+from .nethack_perceiver_model import NethackPerceiverModel

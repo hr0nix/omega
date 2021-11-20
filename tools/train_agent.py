@@ -10,7 +10,8 @@ import clu.metric_writers
 from absl import logging
 logging.set_verbosity(logging.INFO)
 
-from omega.agents import RandomAgent, NethackTransformerAgent
+from omega.agents import NethackPPOAgent
+from omega.models import NethackPerceiverModel
 from omega.training import OnPolicyTrainer
 from omega.evaluation import EvaluationStats
 from omega.minihack.rewards import distance_to_staircase_reward
@@ -42,7 +43,8 @@ def main(args):
 
     env_factory = lambda: make_env(game_logs_dir=args.game_logs, use_dense_reward=config['use_dense_reward'])
     env = env_factory()
-    agent = NethackTransformerAgent(env.observation_space, env.action_space, config=config['model_config'])
+    agent = NethackPPOAgent(
+        NethackPerceiverModel, env.observation_space, env.action_space, config=config['agent_config'])
     trainer = OnPolicyTrainer(
         env_factory=env_factory,
         num_parallel_envs=config['num_parallel_envs'],
