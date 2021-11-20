@@ -2,10 +2,10 @@ import abc
 from functools import partial
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ..training.batched_env_stepper import BatchedEnvStepper
-from .trajectory import TrajectoryBatch
 
 
 class Trainer(abc.ABC):
@@ -27,8 +27,7 @@ class Trainer(abc.ABC):
         self._run_night(agent, stats, trajectory_batch)
 
     def _run_day(self, agent, stats):
-        trajectory_batch = TrajectoryBatch(
-            num_trajectories=self._num_envs, num_transitions=self.num_collection_steps)
+        transition_batches = []
 
         for step in range(self.num_collection_steps):
             observation_batch_cpu = self._batched_env_stepper.get_current_state()['current_state']
@@ -43,13 +42,12 @@ class Trainer(abc.ABC):
                         reward_done_batch_cpu['reward'][env_index], reward_done_batch_cpu['done'][env_index])
 
                 if reward_done_batch_cpu['done'][env_index]:
-                    # Allocate a new run index for stats accumulation
+                    # Allocate a new episode index for stats accumulation
                     self._current_episode_indices[env_index] = self._next_episode_index
                     self._next_episode_index += 1
 
-            trajectory_batch.add_transition_batch(
-                transition_index=step,
-                pytree=dict(
+            transition_batches.append(
+                dict(
                     observations=observation_batch_cpu,
                     actions=action_batch_gpu,
                     rewards=reward_done_batch_cpu['reward'],
@@ -58,7 +56,14 @@ class Trainer(abc.ABC):
                 )
             )
 
-        return trajectory_batch
+        return self._batch_trajectories(transition_batches)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _batch_trajectories(self, transition_batches):
+        return jax.tree_map(
+            lambda *leaves: jnp.stack(leaves, axis=1),  # Stack along timestamp dimension
+            *transition_batches,
+        )
 
     @abc.abstractmethod
     def _run_night(self, agent, stats, collected_trajectories):
