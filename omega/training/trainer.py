@@ -45,7 +45,7 @@ class Trainer(abc.ABC):
 
         for step in range(self.num_collection_steps):
             observation_batch = self._batch_tensors([env.current_state for env in self._training_envs])
-            action_batch, metadata_batch = agent.act(observation_batch)
+            action_batch, metadata_batch = agent.act_on_batch(observation_batch)
 
 
             for env_index in range(num_training_envs):

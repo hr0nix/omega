@@ -87,7 +87,7 @@ class NethackPPOAgent(TrainableAgentBase):
             path, self._train_state, step=step, keep=1, overwrite=True)
 
     @partial(jax.jit, static_argnums=(0,))
-    def _forward_step(self, train_state, observation_batch, rng):
+    def _act_on_batch_jitted(self, train_state, observation_batch, rng):
         rng1, rng2 = jax.random.split(rng)
         log_action_probs, state_values = train_state.apply_fn(
             train_state.params, observation_batch, deterministic=True, rng=rng1)
@@ -98,7 +98,6 @@ class NethackPPOAgent(TrainableAgentBase):
         selected_actions = jax.random.categorical(rng2, log_action_probs)
         return selected_actions, metadata
 
-    @partial(jax.jit, static_argnums=(0,))
     def _train_on_minibatch(self, train_state, trajectory_minibatch, rng):
         def loss_function(params, train_state, trajectory_minibatch, rng):
             log_action_probs, state_values = train_state.apply_fn(
@@ -137,7 +136,6 @@ class NethackPPOAgent(TrainableAgentBase):
 
         return train_state.apply_gradients(grads=grads), stats
 
-    @partial(jax.jit, static_argnums=(0,))
     def _sample_minibatch(self, trajectory_batch, rng):
         key1, key2 = jax.random.split(rng)
 
@@ -155,7 +153,6 @@ class NethackPPOAgent(TrainableAgentBase):
             trajectory_batch,
         )
 
-    @partial(jax.jit, static_argnums=(0,))
     def _compute_advantage_and_value_targets(self, trajectory_batch):
         def per_trajectory_advantage(rewards, discounts, state_values):
             return rlax.truncated_generalized_advantage_estimation(
@@ -182,34 +179,44 @@ class NethackPPOAgent(TrainableAgentBase):
         })
         return trajectory_batch
 
-    def _train_step(self, train_state, trajectory_batch, rng):
-        trajectory_batch = self._preprocess_batch(trajectory_batch)
-        train_stats_sum = None
-        for _ in range(self._config['num_minibatches_per_train_step']):
-            rng, subkey1, subkey2 = jax.random.split(rng, 3)
-            trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
-            train_state, train_stats = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
-            train_stats_sum = train_stats if train_stats_sum is None else jax.tree_map(
-                jnp.add, train_stats_sum, train_stats)
-
-        # TODO: jit stats computation?
-        stats = {
+    def _aggregate_train_stats(self, train_stats_per_minibatch, trajectory_batch):
+        def aggregate_minibatch_stats(stats):
+            return jnp.sum(stats) / self._config['num_minibatches_per_train_step']
+        train_stats_minibatch_avg = jax.tree_map(f=aggregate_minibatch_stats, tree=train_stats_per_minibatch)
+        batch_stats = {
             'state_value': jnp.mean(trajectory_batch['metadata']['state_values']),
             'advantage': jnp.mean(trajectory_batch['advantage']),
             'value_target': jnp.mean(trajectory_batch['value_targets']),
             'policy_entropy': jnp.mean(
                 distributions.softmax().entropy(trajectory_batch['metadata']['log_action_probs']))
         }
-        stats = dict_update(stats, {
-            k: v / self._config['num_minibatches_per_train_step']
-            for k, v in train_stats_sum.items()
-        })
+        return dict_update(batch_stats, train_stats_minibatch_avg)
 
-        return train_state, stats
+    @partial(jax.jit, static_argnums=(0,))
+    def _train_on_batch_jitted(self, train_state, trajectory_batch, rng):
+        trajectory_batch = self._preprocess_batch(trajectory_batch)
 
-    def act(self, observation_batch):
-        return self._forward_step(self._train_state, observation_batch, self._next_random_key())
+        def train_step_on_minibatch_body(carry, minibatch_index):
+            rng, train_state = carry
+
+            rng, subkey1, subkey2 = jax.random.split(rng, 3)
+            trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
+            train_state, train_stats = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
+
+            return (rng, train_state), train_stats
+
+        (rng, train_state), train_stats_per_minibatch = jax.lax.scan(
+            f=train_step_on_minibatch_body,
+            init=(rng, train_state),
+            xs=None, length=self._config['num_minibatches_per_train_step'],
+        )
+
+        aggregated_train_stats = self._aggregate_train_stats(train_stats_per_minibatch, trajectory_batch)
+        return train_state, aggregated_train_stats
+
+    def act_on_batch(self, observation_batch):
+        return self._act_on_batch_jitted(self._train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
-        self._train_state, stats = self._train_step(self._train_state, trajectory_batch.buffer, self._next_random_key())
+        self._train_state, stats = self._train_on_batch_jitted(self._train_state, trajectory_batch.buffer, self._next_random_key())
         return stats

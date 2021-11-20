@@ -15,5 +15,5 @@ class Agent(abc.ABC):
         return self._action_space
 
     @abc.abstractmethod
-    def act(self, observation_batch):
+    def act_on_batch(self, observation_batch):
         pass
