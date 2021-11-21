@@ -13,6 +13,7 @@ class NethackPerceiverModel(nn.Module):
     num_actions: int
     glyph_crop_area: Optional[Tuple[int, int]] = None
     glyph_embedding_dim: int = 64
+    output_attention_num_heads: int = 8
     num_memory_units: int = 128
     memory_dim: int = 64
     use_bl_stats: bool = True
@@ -51,6 +52,10 @@ class NethackPerceiverModel(nn.Module):
             num_embeddings=self.num_memory_units,
             features=self.memory_dim
         )
+        self._output_embedding = nn.Embed(
+            num_embeddings=2,
+            features=self.memory_dim
+        )
         self._memory_update_blocks = [
             TransformerNet(
                 num_blocks=self.num_perceiver_self_attention_subblocks,
@@ -75,6 +80,15 @@ class NethackPerceiverModel(nn.Module):
             )
             for block_idx in range(self.num_perceiver_blocks)
         ]
+        self._output_transformer = CrossTransformerNet(
+                num_blocks=1,
+                dim=self.memory_dim,
+                fc_inner_dim=self.transformer_fc_inner_dim,
+                num_heads=self.output_attention_num_heads,
+                dropout_rate=self.transformer_dropout,
+                deterministic=self.deterministic,
+                name='{}/output_attention'.format(self.name),
+            )
         if self.use_bl_stats:
             self._bl_stats_network = DenseNet(
                 num_blocks=self.num_bl_stats_blocks, dim=self.memory_dim, output_dim=self.memory_dim,
@@ -125,10 +139,12 @@ class NethackPerceiverModel(nn.Module):
         batch_size = glyphs.shape[0]
 
         if self.glyph_crop_area is not None:
+            # Can be used to crop unused observation area to speedup convergence
             start_r = (nle.nethack.DUNGEON_SHAPE[0] - self.glyph_crop_area[0]) // 2
             start_c = (nle.nethack.DUNGEON_SHAPE[1] - self.glyph_crop_area[1]) // 2
             glyphs = glyphs[:, start_r:start_r + self.glyph_crop_area[0], start_c:start_c + self.glyph_crop_area[1]]
 
+        # Perceiver latent memory embeddings
         memory_indices = jnp.arange(0, self.num_memory_units, dtype=jnp.int32)
         memory = self._memory_embedding(memory_indices)  # TODO: add memory recurrence
         memory = jnp.tile(memory, reps=[batch_size, 1, 1])
@@ -138,9 +154,11 @@ class NethackPerceiverModel(nn.Module):
             bl_stats = self._bl_stats_network(bl_stats)
             memory = memory + jnp.expand_dims(bl_stats, axis=1)  # Add global features to every memory cell
 
+        # Observed glyph embeddings
         glyphs = jnp.reshape(glyphs, newshape=(glyphs.shape[0], -1))
         glyphs_embeddings = self._glyph_embedding(glyphs)
 
+        # Add positional embedding to glyphs (fixed or learned)
         if self.use_fixed_positional_embeddings:
             glyph_pos_embeddings = self._make_fixed_pos_embeddings()
         else:
@@ -149,6 +167,7 @@ class NethackPerceiverModel(nn.Module):
             glyph_pos_embeddings = self._glyph_pos_embedding(glyph_pos_indices)
         glyphs_embeddings += glyph_pos_embeddings
 
+        # Perceiver body
         for block_idx in range(self.num_perceiver_blocks):
             rng, subkey = jax.random.split(rng)
             memory = self._map_attention_blocks[block_idx](
@@ -158,12 +177,20 @@ class NethackPerceiverModel(nn.Module):
             memory = self._memory_update_blocks[block_idx](
                 memory, deterministic=deterministic, rng=subkey)
 
-        # TODO: use pooling instead of fixed memory cell?
+        # Attend to latent memory from each output
+        rng, subkey = jax.random.split(rng)
+        output_indices = jnp.arange(0, 2, dtype=jnp.int32)
+        output_embeddings = self._output_embedding(output_indices)
+        output_embeddings = jnp.tile(output_embeddings, reps=[batch_size, 1, 1])
+        output_embeddings = self._output_transformer(
+            output_embeddings, memory, deterministic=deterministic, rng=subkey)
 
-        action_logits = self._policy_network(memory[:, 0, :])
+        # Compute action probs
+        action_logits = self._policy_network(output_embeddings[:, 0, :])
         action_logprobs = jax.nn.log_softmax(action_logits, axis=-1)
 
-        state_value = self._value_network(memory[:, 1, :])
+        # Compute state values
+        state_value = self._value_network(output_embeddings[:, 1, :])
         state_value = jnp.squeeze(state_value, axis=-1)
 
         return action_logprobs, state_value
