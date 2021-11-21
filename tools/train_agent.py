@@ -19,16 +19,16 @@ from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
 
 
-def make_env(game_logs_dir, use_dense_reward):
+def make_env(train_config, game_logs_dir):
     reward_manager = None
-    if use_dense_reward:
+    if train_config['use_dense_staircase_reward']:
         reward_manager = minihack.RewardManager()
         reward_manager.add_location_event('staircase', terminal_required=True)
         reward_manager.add_custom_reward_fn(distance_to_staircase_reward)
 
     return gym.make(
-        'MiniHack-Room-Random-5x5-v0',
-        observation_keys=['glyphs', 'blstats'],
+        train_config['env_name'],
+        observation_keys=train_config['observation_keys'],
         savedir=game_logs_dir,
         reward_manager=reward_manager,
     )
@@ -41,18 +41,19 @@ def load_config(filename):
 
 def main(args):
     config = load_config(args.config)
+    train_config = config['train_config']
 
-    ray.init(num_cpus=config['num_workers'])
+    ray.init(num_cpus=train_config['num_workers'])
 
-    env_factory = lambda: make_env(game_logs_dir=args.game_logs, use_dense_reward=config['use_dense_reward'])
+    env_factory = lambda: make_env(train_config, game_logs_dir=args.game_logs)
     env = env_factory()
     agent = NethackPPOAgent(
         NethackPerceiverModel, env.observation_space, env.action_space, config=config['agent_config'])
     trainer = OnPolicyTrainer(
         env_factory=env_factory,
-        num_workers=config['num_workers'],
-        num_envs=config['num_envs'],
-        num_collection_steps=config['num_collection_steps'],
+        num_workers=train_config['num_workers'],
+        num_envs=train_config['num_envs'],
+        num_collection_steps=train_config['num_collection_steps'],
     )
 
     start_day = 0
@@ -65,10 +66,10 @@ def main(args):
         log_writer = clu.metric_writers.create_default_writer(args.tb_logs)
 
     stats = EvaluationStats()
-    for day in tqdm.tqdm(range(start_day, config['num_days'])):
+    for day in tqdm.tqdm(range(start_day, train_config['num_days'])):
         trainer.run_training_step(agent, stats)
 
-        if (day + 1) % config['epoch_every_num_days'] == 0:
+        if (day + 1) % train_config['epoch_every_num_days'] == 0:
             if log_writer is not None:
                 log_writer.write_scalars(
                     day,
