@@ -30,29 +30,30 @@ class Trainer(abc.ABC):
         transition_batches = []
 
         for step in range(self.num_collection_steps):
-            observation_batch_cpu = self._batched_env_stepper.get_current_state()['current_state']
-            action_batch_gpu, metadata_batch_gpu = agent.act_on_batch(observation_batch_cpu)
+            current_state_batch_cpu = self._batched_env_stepper.get_current_state()['current_state']
+            action_batch_gpu, metadata_batch_gpu = agent.act_on_batch(current_state_batch_cpu)
             action_batch_cpu = np.asarray(action_batch_gpu)
-            reward_done_batch_cpu = self._batched_env_stepper.step(action_batch_cpu)
+            reward_done_next_state_batch_cpu = self._batched_env_stepper.step(action_batch_cpu)
 
             for env_index in range(self._num_envs):
                 if stats is not None:
                     stats.add_transition(
-                        self._current_episode_indices[env_index], action_batch_cpu[env_index],
-                        reward_done_batch_cpu['reward'][env_index], reward_done_batch_cpu['done'][env_index])
+                        self._current_episode_indices[env_index],
+                        action_batch_cpu[env_index],
+                        reward_done_next_state_batch_cpu['rewards'][env_index],
+                        reward_done_next_state_batch_cpu['done'][env_index])
 
-                if reward_done_batch_cpu['done'][env_index]:
+                if reward_done_next_state_batch_cpu['done'][env_index]:
                     # Allocate a new episode index for stats accumulation
                     self._current_episode_indices[env_index] = self._next_episode_index
                     self._next_episode_index += 1
 
             transition_batches.append(
                 dict(
-                    observations=observation_batch_cpu,
+                    current_state=current_state_batch_cpu,
                     actions=action_batch_gpu,
-                    rewards=reward_done_batch_cpu['reward'],
-                    done=reward_done_batch_cpu['done'],
                     metadata=metadata_batch_gpu,
+                    **reward_done_next_state_batch_cpu,
                 )
             )
 

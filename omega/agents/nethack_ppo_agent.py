@@ -1,3 +1,5 @@
+import os
+
 from functools import partial
 
 from absl import logging
@@ -13,6 +15,7 @@ from rlax._src import distributions
 from ..utils.pytree import dict_update
 from .trainable_agent import TrainableAgentBase
 from ..neural.optimization import clip_gradient_by_norm
+from ..models import RNDNetworkPair
 
 
 class NethackPPOAgent(TrainableAgentBase):
@@ -26,7 +29,11 @@ class NethackPPOAgent(TrainableAgentBase):
         'num_minibatches_per_train_step': 100,
         'minibatch_size': 64,
         'ppo_eps': 0.25,
-        'model_config': {}
+        'model_config': {},
+        'use_rnd': False,
+        'rnd_lr': 1e-3,
+        'rnd_model_config': {},
+        'exploration_reward_scale': 1.0,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -38,32 +45,51 @@ class NethackPPOAgent(TrainableAgentBase):
         self._random_key = jax.random.PRNGKey(31337)
         self._config = self.CONFIG.copy(config or {})
         self._model_factory = model_factory
-        self._model, self._train_state = self._build_model()
+
+        current_state_batch = self._make_fake_state_batch()
+        self._model, self._train_state = self._build_model(current_state_batch)
+        if self._config['use_rnd']:
+            self._rnd_model, self._rnd_train_state = self._build_rnd_model(current_state_batch)
+        else:
+            self._rnd_model = self._rnd_train_state = None
 
     def _next_random_key(self):
         self._random_key, subkey = jax.random.split(self._random_key)
         return subkey
 
-    def _build_model(self):
-        observations_batch = {
+    def _make_fake_state_batch(self):
+        return {
             key: jnp.zeros(
                 shape=(1,) + desc.shape,
                 dtype=desc.dtype
             )
             for key, desc in self.observation_space.spaces.items()
         }
-        return self._build_model_for_batch(observations_batch)
 
-    def _build_model_for_batch(self, observations_batch):
+    def _build_model(self, current_state_batch):
         model = self._model_factory(num_actions=self.action_space.n, **self._config['model_config'])
         model_params = model.init(
-            self._next_random_key(), observations_batch, deterministic=False, rng=self._next_random_key())
+            self._next_random_key(), current_state_batch, deterministic=False, rng=self._next_random_key())
 
         optimizer = optax.rmsprop(learning_rate=self._config['lr'])
 
         train_state = self.TrainState.create(apply_fn=model.apply, params=model_params, tx=optimizer)
 
         return model, train_state
+
+    def _build_rnd_model(self, next_state_batch):
+        rnd_model = RNDNetworkPair(state_embedding_model_config=self._config['rnd_model_config'])
+        rnd_model_params = rnd_model.init(
+            self._next_random_key(), next_state_batch, deterministic=False, rng=self._next_random_key())
+
+        optimizer = optax.rmsprop(learning_rate=self._config['rnd_lr'])
+
+        rnd_train_state = self.TrainState.create(apply_fn=rnd_model.apply, params=rnd_model_params, tx=optimizer)
+
+        return rnd_model, rnd_train_state
+
+    def _rnd_checkpoint_path(self, checkpoint_path):
+        return os.path.join(checkpoint_path, 'rnd')
 
     def try_load_from_checkpoint(self, path):
         """
@@ -79,29 +105,52 @@ class NethackPPOAgent(TrainableAgentBase):
         else:
             logging.info('State will be loaded from checkpoint {}'.format(checkpoint_path))
             self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
+
+            if self._config['use_rnd']:
+                rnd_path = self._rnd_checkpoint_path(path)
+                rnd_checkpoint_path = flax.training.checkpoints.latest_checkpoint(rnd_path)
+                assert rnd_checkpoint_path is not None, f'No RND checkpoint found at {rnd_path}'
+                self._rnd_train_state = flax.training.checkpoints.restore_checkpoint(
+                    rnd_checkpoint_path, self._rnd_train_state)
+
             return self._train_state.step_index + 1
 
-    def save_to_checkpoint(self, path, step):
+    def save_to_checkpoint(self, checkpoint_path, step):
         self._train_state = self._train_state.replace(step_index=step)
         flax.training.checkpoints.save_checkpoint(
-            path, self._train_state, step=step, keep=1, overwrite=True)
+            checkpoint_path, self._train_state, step=step, keep=1, overwrite=True)
+
+        if self._config['use_rnd']:
+            flax.training.checkpoints.save_checkpoint(
+                self._rnd_checkpoint_path(checkpoint_path), self._rnd_train_state, step=step, keep=1, overwrite=True)
 
     @partial(jax.jit, static_argnums=(0,))
-    def _act_on_batch_jitted(self, train_state, observation_batch, rng):
-        rng1, rng2 = jax.random.split(rng)
+    def _act_on_batch_jitted(self, train_state, rnd_train_state, observation_batch, rng):
+        rng, subkey1, subkey2 = jax.random.split(rng, 3)
         log_action_probs, state_values = train_state.apply_fn(
-            train_state.params, observation_batch, deterministic=True, rng=rng1)
+            train_state.params, observation_batch, deterministic=True, rng=subkey1)
         metadata = {
             'log_action_probs': log_action_probs,
             'state_values': state_values,
         }
-        selected_actions = jax.random.categorical(rng2, log_action_probs)
+        selected_actions = jax.random.categorical(subkey2, log_action_probs)
+
+        if self._config['use_rnd']:
+            rng, subkey = jax.random.split(rng)
+            rnd_loss = rnd_train_state.apply_fn(
+                rnd_train_state.params, observation_batch, deterministic=True, rng=subkey)
+            metadata = dict_update(metadata, {
+                'rnd_loss': rnd_loss,
+            })
+
         return selected_actions, metadata
 
-    def _train_on_minibatch(self, train_state, trajectory_minibatch, rng):
+    def _train_on_minibatch(self, train_state, rnd_train_state, trajectory_minibatch, rng):
+        subkey1, subkey2 = jax.random.split(rng)
+
         def loss_function(params, train_state, trajectory_minibatch, rng):
             log_action_probs, state_values = train_state.apply_fn(
-                params, trajectory_minibatch['observations'], deterministic=False, rng=rng)
+                params, trajectory_minibatch['current_state'], deterministic=False, rng=rng)
 
             minibatch_range = jnp.arange(0, log_action_probs.shape[0])
             log_sampled_action_probs = log_action_probs[minibatch_range, trajectory_minibatch['actions']]
@@ -129,12 +178,28 @@ class NethackPPOAgent(TrainableAgentBase):
             }
 
         grad_and_stats = jax.grad(loss_function, argnums=0, has_aux=True)
-        grads, stats = grad_and_stats(train_state.params, train_state, trajectory_minibatch, rng)
-
+        grads, stats = grad_and_stats(
+            train_state.params, train_state, trajectory_minibatch, subkey1)
         if self._config['gradient_clipnorm'] is not None:
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
+        train_state = train_state.apply_gradients(grads=grads)
 
-        return train_state.apply_gradients(grads=grads), stats
+        if self._config['use_rnd']:
+            def rnd_loss_function(rnd_params, rnd_train_state, trajectory_minibatch, rng):
+                rnd_loss = rnd_train_state.apply_fn(
+                    rnd_params, trajectory_minibatch['next_state'], deterministic=False, rng=rng)
+                rnd_loss = jnp.mean(rnd_loss)
+                return rnd_loss, {
+                    'rnd_loss': rnd_loss,
+                }
+
+            rnd_grad_and_stats = jax.grad(rnd_loss_function, argnums=0, has_aux=True)
+            rnd_grads, rnd_stats = rnd_grad_and_stats(
+                rnd_train_state.params, rnd_train_state, trajectory_minibatch, subkey2)
+            rnd_train_state = rnd_train_state.apply_gradients(grads=rnd_grads)
+            stats = dict_update(stats, rnd_stats)
+
+        return train_state, rnd_train_state, stats
 
     def _sample_minibatch(self, trajectory_batch, rng):
         key1, key2 = jax.random.split(rng)
@@ -156,12 +221,19 @@ class NethackPPOAgent(TrainableAgentBase):
     def _compute_advantage_and_value_targets(self, trajectory_batch):
         def per_trajectory_advantage(rewards, discounts, state_values):
             return rlax.truncated_generalized_advantage_estimation(
-                rewards[:-1], discounts[:-1], self._config['gae_lambda'], state_values)
-
+                rewards, discounts, self._config['gae_lambda'], state_values)
         per_batch_advantage = jax.vmap(per_trajectory_advantage, in_axes=0)
-        discounts = (1.0 - trajectory_batch['done']) * self._config['discount_factor']
+
+        discounts = ((1.0 - trajectory_batch['done']) * self._config['discount_factor'])[:, :-1]
+        rewards = trajectory_batch['rewards'][:, :-1]
+        if self._config['use_rnd']:
+            # Taking RND loss aka surprise at the NEXT state as the exploration reward
+            exploration_rewards = trajectory_batch['metadata']['rnd_loss'][:, 1:]
+            # TODO: don't take episode end into accounts for extrinsic rewards (that would require a separate value head)
+            rewards += self._config['exploration_reward_scale'] * exploration_rewards
+
         advantage = per_batch_advantage(
-            trajectory_batch['rewards'], discounts, trajectory_batch['metadata']['state_values'])
+            rewards, discounts, trajectory_batch['metadata']['state_values'])
         value_targets = advantage + trajectory_batch['metadata']['state_values'][:, :-1]
 
         if self._config['normalize_advantage']:
@@ -171,11 +243,16 @@ class NethackPPOAgent(TrainableAgentBase):
 
     def _preprocess_batch(self, trajectory_batch):
         advantage, value_targets = self._compute_advantage_and_value_targets(trajectory_batch)
-        # Get rid of states we don't have GAE estimates for
+        next_state = jax.tree_map(lambda l: l[:, 1:, ...], trajectory_batch['current_state'])
+
+        # Get rid of states we don't have next states and GAE estimates for
         trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
+
+        # Add the values we just computed to the batch
         trajectory_batch = dict_update(trajectory_batch, {
             'advantage': advantage,
             'value_targets': value_targets,
+            'next_state': next_state,
         })
         return trajectory_batch
 
@@ -193,31 +270,33 @@ class NethackPPOAgent(TrainableAgentBase):
         return dict_update(batch_stats, train_stats_minibatch_avg)
 
     @partial(jax.jit, static_argnums=(0,))
-    def _train_on_batch_jitted(self, train_state, trajectory_batch, rng):
+    def _train_on_batch_jitted(self, train_state, rnd_train_state, trajectory_batch, rng):
         trajectory_batch = self._preprocess_batch(trajectory_batch)
 
         def train_step_on_minibatch_body(carry, minibatch_index):
-            rng, train_state = carry
+            rng, train_state, rnd_train_state = carry
 
             rng, subkey1, subkey2 = jax.random.split(rng, 3)
             trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
-            train_state, train_stats = self._train_on_minibatch(train_state, trajectory_minibatch, subkey2)
+            train_state, rnd_train_state, train_stats = self._train_on_minibatch(
+                train_state, rnd_train_state, trajectory_minibatch, subkey2)
 
-            return (rng, train_state), train_stats
+            return (rng, train_state, rnd_train_state), train_stats
 
-        (rng, train_state), train_stats_per_minibatch = jax.lax.scan(
+        (rng, train_state, rnd_train_state), train_stats_per_minibatch = jax.lax.scan(
             f=train_step_on_minibatch_body,
-            init=(rng, train_state),
+            init=(rng, train_state, rnd_train_state),
             xs=None, length=self._config['num_minibatches_per_train_step'],
         )
 
         aggregated_train_stats = self._aggregate_train_stats(train_stats_per_minibatch, trajectory_batch)
-        return train_state, aggregated_train_stats
+        return train_state, rnd_train_state, aggregated_train_stats
 
     def act_on_batch(self, observation_batch):
-        return self._act_on_batch_jitted(self._train_state, observation_batch, self._next_random_key())
+        return self._act_on_batch_jitted(
+            self._train_state, self._rnd_train_state, observation_batch, self._next_random_key())
 
     def train_on_batch(self, trajectory_batch):
-        self._train_state, stats = self._train_on_batch_jitted(
-            self._train_state, trajectory_batch, self._next_random_key())
+        self._train_state, self._rnd_train_state, stats = self._train_on_batch_jitted(
+            self._train_state, self._rnd_train_state, trajectory_batch, self._next_random_key())
         return stats

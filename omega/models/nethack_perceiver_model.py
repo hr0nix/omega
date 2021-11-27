@@ -132,10 +132,10 @@ class NethackPerceiverModel(nn.Module):
 
         return pos_embeddings
 
-    def __call__(self, observations_batch, rng, deterministic=None):
+    def __call__(self, current_state_batch, rng, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        glyphs = observations_batch['glyphs']
+        glyphs = current_state_batch['glyphs']
         batch_size = glyphs.shape[0]
 
         if self.glyph_crop_area is not None:
@@ -150,7 +150,7 @@ class NethackPerceiverModel(nn.Module):
         memory = jnp.tile(memory, reps=[batch_size, 1, 1])
 
         if self.use_bl_stats:
-            bl_stats = observations_batch['blstats']
+            bl_stats = current_state_batch['blstats']
             bl_stats = self._bl_stats_network(bl_stats)
             memory = memory + jnp.expand_dims(bl_stats, axis=1)  # Add global features to every memory cell
 

@@ -1,1 +1,2 @@
 from .nethack_perceiver_model import NethackPerceiverModel
+from .rnd_model import RNDNetworkPair

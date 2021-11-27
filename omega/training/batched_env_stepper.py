@@ -28,16 +28,22 @@ class Worker(object):
     def step(self, action_batch):
         reward_per_env = []
         done_per_env = []
+        next_state_per_env = []
         for env_index in range(len(self._envs)):
-            obs_after, reward, done, info = self._envs[env_index].step(action_batch[env_index])
-            reward_per_env.append(reward)
-            done_per_env.append(done)
+            next_state, reward, done, info = self._envs[env_index].step(action_batch[env_index])
             if done:
                 self._envs[env_index].reset()
+                # If it is the end of the episode, we return the first state of the next episode as the next state
+                next_state = self._envs[env_index].current_state
+
+            reward_per_env.append(reward)
+            done_per_env.append(done)
+            next_state_per_env.append(next_state)
 
         return {
-            'reward': np.asarray(reward_per_env, dtype=np.float),
+            'rewards': np.asarray(reward_per_env, dtype=np.float),
             'done': np.asarray(done_per_env, dtype=np.bool_),
+            'next_state': self._stack_states(next_state_per_env),
         }
 
 
