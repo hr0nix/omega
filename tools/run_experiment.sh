@@ -3,7 +3,7 @@
 set -e
 
 if [ "$#" -ne 1 ]; then
-    echo "Usage: <experiment_name>"
+    echo "Usage: $0 <experiment_name>"
     exit 1
 fi
 
