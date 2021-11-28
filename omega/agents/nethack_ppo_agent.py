@@ -78,7 +78,7 @@ class NethackPPOAgent(TrainableAgentBase):
         return model, train_state
 
     def _build_rnd_model(self, next_state_batch):
-        rnd_model = RNDNetworkPair(state_embedding_model_config=self._config['rnd_model_config'])
+        rnd_model = RNDNetworkPair(**self._config['rnd_model_config'])
         rnd_model_params = rnd_model.init(
             self._next_random_key(), next_state_batch, deterministic=False, rng=self._next_random_key())
 
