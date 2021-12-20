@@ -22,6 +22,8 @@ class NethackPPOAgent(TrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'value_function_loss_weight': 1.0,
         'entropy_regularizer_weight': 0.0,
+        'inverse_dynamics_loss_weight': 0.0,
+        'ppo_loss_weight': 1.0,
         'lr': 1e-3,
         'discount_factor': 0.99,
         'gae_lambda': 0.95,
@@ -66,23 +68,24 @@ class NethackPPOAgent(TrainableAgentBase):
             for key, desc in self.observation_space.spaces.items()
         }
 
-    def _build_model(self, current_state_batch):
+    def _build_model(self, state_batch):
         model = self._model_factory(num_actions=self.action_space.n, **self._config['model_config'])
         model_params = model.init(
-            self._next_random_key(), current_state_batch, deterministic=False, rng=self._next_random_key())
+            self._next_random_key(), current_state=state_batch, next_state=state_batch,
+            deterministic=False, rng=self._next_random_key())
 
-        optimizer = optax.rmsprop(learning_rate=self._config['lr'])
+        optimizer = optax.adam(learning_rate=self._config['lr'])
 
         train_state = self.TrainState.create(apply_fn=model.apply, params=model_params, tx=optimizer)
 
         return model, train_state
 
-    def _build_rnd_model(self, next_state_batch):
+    def _build_rnd_model(self, state_batch):
         rnd_model = RNDNetworkPair(**self._config['rnd_model_config'])
         rnd_model_params = rnd_model.init(
-            self._next_random_key(), next_state_batch, deterministic=False, rng=self._next_random_key())
+            self._next_random_key(), state_batch, deterministic=False, rng=self._next_random_key())
 
-        optimizer = optax.rmsprop(learning_rate=self._config['rnd_lr'])
+        optimizer = optax.adam(learning_rate=self._config['rnd_lr'])
 
         rnd_train_state = self.TrainState.create(apply_fn=rnd_model.apply, params=rnd_model_params, tx=optimizer)
 
@@ -127,8 +130,11 @@ class NethackPPOAgent(TrainableAgentBase):
     @partial(jax.jit, static_argnums=(0,))
     def _act_on_batch_jitted(self, train_state, rnd_train_state, observation_batch, rng):
         rng, subkey1, subkey2 = jax.random.split(rng, 3)
-        log_action_probs, state_values = train_state.apply_fn(
-            train_state.params, observation_batch, deterministic=True, rng=subkey1)
+        log_action_probs, _, state_values = train_state.apply_fn(
+            train_state.params,
+            current_state=observation_batch,
+            next_state=observation_batch,  # Pass current state as the next state, inverse dynamics is irrelevant here
+            deterministic=True, rng=subkey1)
         metadata = {
             'log_action_probs': log_action_probs,
             'state_values': state_values,
@@ -149,10 +155,12 @@ class NethackPPOAgent(TrainableAgentBase):
         subkey1, subkey2 = jax.random.split(rng)
 
         def loss_function(params, train_state, trajectory_minibatch, rng):
-            log_action_probs, state_values = train_state.apply_fn(
-                params, trajectory_minibatch['current_state'], deterministic=False, rng=rng)
+            log_action_probs, log_id_action_probs, state_values = train_state.apply_fn(
+                params, trajectory_minibatch['current_state'], trajectory_minibatch['next_state'],
+                deterministic=False, rng=rng)
 
             minibatch_range = jnp.arange(0, log_action_probs.shape[0])
+
             log_sampled_action_probs = log_action_probs[minibatch_range, trajectory_minibatch['actions']]
             log_sampled_prev_action_probs = trajectory_minibatch['metadata']['log_action_probs'][
                 minibatch_range, trajectory_minibatch['actions']]
@@ -163,7 +171,7 @@ class NethackPPOAgent(TrainableAgentBase):
                 1.0 - self._config['ppo_eps'],
                 1.0 + self._config['ppo_eps'],
             ) * trajectory_minibatch['advantage']
-            ppo_loss = jnp.maximum(actor_loss_1, actor_loss_2).mean()
+            ppo_loss = self._config['ppo_loss_weight'] * jnp.maximum(actor_loss_1, actor_loss_2).mean()
 
             value_function_loss = self._config['value_function_loss_weight'] * jnp.mean(
                 0.5 * (state_values - trajectory_minibatch['value_targets']) ** 2)
@@ -171,10 +179,14 @@ class NethackPPOAgent(TrainableAgentBase):
             entropy_regularizer_loss = self._config['entropy_regularizer_weight'] * rlax.entropy_loss(
                 log_action_probs, jnp.ones_like(trajectory_minibatch['advantage']))
 
-            return ppo_loss + value_function_loss + entropy_regularizer_loss, {
+            log_sampled_id_action_probs = log_id_action_probs[minibatch_range, trajectory_minibatch['actions']]
+            inverse_dynamics_loss = -self._config['inverse_dynamics_loss_weight'] * jnp.mean(log_sampled_id_action_probs)
+
+            return ppo_loss + value_function_loss + entropy_regularizer_loss + inverse_dynamics_loss, {
                 'ppo_loss': ppo_loss,
                 'value_function_loss': value_function_loss,
                 'entropy_regularizer_loss': entropy_regularizer_loss,
+                'inverse_dynamics_loss': inverse_dynamics_loss,
             }
 
         grad_and_stats = jax.grad(loss_function, argnums=0, has_aux=True)

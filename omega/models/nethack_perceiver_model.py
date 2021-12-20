@@ -218,6 +218,8 @@ class NethackPerceiverModel(nn.Module):
     transformer_fc_inner_dim: int = 256
     num_policy_network_heads: int = 2
     num_policy_network_blocks: int = 1
+    num_inverse_dynamics_network_heads: int = 2
+    num_inverse_dynamics_network_blocks: int = 1
     num_value_network_blocks: int = 2
     deterministic: Optional[bool] = None
 
@@ -248,15 +250,23 @@ class NethackPerceiverModel(nn.Module):
             transformer_dropout=self.transformer_dropout,
             deterministic=self.deterministic,
         )
+        self._inverse_dynamics_model = ItemSelector(
+            transformer_dim=self._state_encoder.memory_dim,
+            transformer_num_blocks=self.num_inverse_dynamics_network_blocks,
+            transformer_num_heads=self.num_inverse_dynamics_network_heads,
+            transformer_fc_inner_dim=self.transformer_fc_inner_dim,
+            transformer_dropout=self.transformer_dropout,
+            deterministic=self.deterministic,
+        )
         self._value_network = DenseNet(
             num_blocks=self.num_value_network_blocks, dim=self._state_encoder.memory_dim, output_dim=1,
         )
 
-    def __call__(self, current_state_batch, rng, deterministic=None):
+    def __call__(self, current_state, next_state, rng, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         rng, subkey = jax.random.split(rng)
-        memory = self._state_encoder(current_state_batch, deterministic=deterministic, rng=subkey)
+        memory = self._state_encoder(current_state, deterministic=deterministic, rng=subkey)
         batch_size = memory.shape[0]
 
         # Attend to latent memory from each regular output
@@ -269,10 +279,20 @@ class NethackPerceiverModel(nn.Module):
         state_value = self._value_network(output_embeddings[:, 0, :])
         state_value = jnp.squeeze(state_value, axis=-1)
 
+        # Embed actions (for policy network and inverse dynamics model)
+        action_embeddings = self._action_embedding(batch_size)
+
         # Compute action probs
         rng, subkey = jax.random.split(rng)
-        action_embeddings = self._action_embedding(batch_size)
-        action_logprobs = self._policy_network(
+        log_action_probs = self._policy_network(
             action_embeddings, memory, deterministic=deterministic, rng=subkey)
 
-        return action_logprobs, state_value
+        # Model inverse dynamics: predict the action that transitions into the next state
+        rng, subkey1, subkey2 = jax.random.split(rng, 3)
+        next_state_memory = self._state_encoder(next_state, deterministic=deterministic, rng=subkey1)
+        combined_memory = jnp.concatenate([memory, next_state_memory], axis=1)
+        action_embeddings = jax.lax.stop_gradient(action_embeddings)  # Do not update action embeddings
+        log_id_action_probs = self._inverse_dynamics_model(
+            action_embeddings, combined_memory, deterministic=deterministic, rng=subkey2)
+
+        return log_action_probs, log_id_action_probs, state_value
