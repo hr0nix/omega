@@ -20,6 +20,8 @@ from omega.utils.jax import disable_jit_if_no_gpu
 
 
 def make_env(train_config, game_logs_dir):
+    import omega.minihack.envs  # noqa
+
     reward_manager = None
     if train_config['use_dense_staircase_reward']:
         reward_manager = minihack.RewardManager()
