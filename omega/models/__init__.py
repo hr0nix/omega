@@ -1,2 +1,3 @@
-from .nethack_perceiver_model import NethackPerceiverModel
-from .rnd_model import RNDNetworkPair
+from .nethack_actor_critic import NethackPerceiverActorCriticModel
+from .nethack_muzero import NethackPerceiverMuZeroModel
+from .nethack_rnd import NethackRNDNetworkPair

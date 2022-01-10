@@ -12,13 +12,13 @@ import optax
 import rlax
 from rlax._src import distributions
 
-from ..utils.pytree import dict_update
-from .trainable_agent import TrainableAgentBase
+from ..utils.pytree import update_pytree
+from .trainable_agent import JaxTrainableAgentBase
 from ..neural.optimization import clip_gradient_by_norm
-from ..models import RNDNetworkPair
+from ..models import NethackRNDNetworkPair, NethackPerceiverActorCriticModel
 
 
-class NethackPPOAgent(TrainableAgentBase):
+class NethackPPOAgent(JaxTrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'value_function_loss_weight': 1.0,
         'entropy_regularizer_weight': 0.0,
@@ -41,10 +41,9 @@ class NethackPPOAgent(TrainableAgentBase):
     class TrainState(flax.training.train_state.TrainState):
         step_index: int = None
 
-    def __init__(self, model_factory, *args, config=None, **kwargs):
+    def __init__(self, *args, model_factory=NethackPerceiverActorCriticModel, config=None, **kwargs):
         super(NethackPPOAgent, self).__init__(*args, **kwargs)
 
-        self._random_key = jax.random.PRNGKey(31337)
         self._config = self.CONFIG.copy(config or {})
         self._model_factory = model_factory
 
@@ -54,10 +53,6 @@ class NethackPPOAgent(TrainableAgentBase):
             self._rnd_model, self._rnd_train_state = self._build_rnd_model(current_state_batch)
         else:
             self._rnd_model = self._rnd_train_state = None
-
-    def _next_random_key(self):
-        self._random_key, subkey = jax.random.split(self._random_key)
-        return subkey
 
     def _make_fake_state_batch(self):
         return {
@@ -71,8 +66,8 @@ class NethackPPOAgent(TrainableAgentBase):
     def _build_model(self, state_batch):
         model = self._model_factory(num_actions=self.action_space.n, **self._config['model_config'])
         model_params = model.init(
-            self._next_random_key(), current_state=state_batch, next_state=state_batch,
-            deterministic=False, rng=self._next_random_key())
+            self.next_random_key(), current_state=state_batch, next_state=state_batch,
+            deterministic=False, rng=self.next_random_key())
 
         optimizer = optax.adam(learning_rate=self._config['lr'])
 
@@ -81,9 +76,9 @@ class NethackPPOAgent(TrainableAgentBase):
         return model, train_state
 
     def _build_rnd_model(self, state_batch):
-        rnd_model = RNDNetworkPair(**self._config['rnd_model_config'])
+        rnd_model = NethackRNDNetworkPair(**self._config['rnd_model_config'])
         rnd_model_params = rnd_model.init(
-            self._next_random_key(), state_batch, deterministic=False, rng=self._next_random_key())
+            self.next_random_key(), state_batch, deterministic=False, rng=self.next_random_key())
 
         optimizer = optax.adam(learning_rate=self._config['rnd_lr'])
 
@@ -145,7 +140,7 @@ class NethackPPOAgent(TrainableAgentBase):
             rng, subkey = jax.random.split(rng)
             rnd_loss = rnd_train_state.apply_fn(
                 rnd_train_state.params, observation_batch, deterministic=True, rng=subkey)
-            metadata = dict_update(metadata, {
+            metadata = update_pytree(metadata, {
                 'rnd_loss': rnd_loss,
             })
 
@@ -189,8 +184,8 @@ class NethackPPOAgent(TrainableAgentBase):
                 'inverse_dynamics_loss': inverse_dynamics_loss,
             }
 
-        grad_and_stats = jax.grad(loss_function, argnums=0, has_aux=True)
-        grads, stats = grad_and_stats(
+        grad_and_stats_func = jax.grad(loss_function, argnums=0, has_aux=True)
+        grads, stats = grad_and_stats_func(
             train_state.params, train_state, trajectory_minibatch, subkey1)
         if self._config['gradient_clipnorm'] is not None:
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
@@ -209,7 +204,7 @@ class NethackPPOAgent(TrainableAgentBase):
             rnd_grads, rnd_stats = rnd_grad_and_stats(
                 rnd_train_state.params, rnd_train_state, trajectory_minibatch, subkey2)
             rnd_train_state = rnd_train_state.apply_gradients(grads=rnd_grads)
-            stats = dict_update(stats, rnd_stats)
+            stats = update_pytree(stats, rnd_stats)
 
         return train_state, rnd_train_state, stats
 
@@ -261,7 +256,7 @@ class NethackPPOAgent(TrainableAgentBase):
         trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
 
         # Add the values we just computed to the batch
-        trajectory_batch = dict_update(trajectory_batch, {
+        trajectory_batch = update_pytree(trajectory_batch, {
             'advantage': advantage,
             'value_targets': value_targets,
             'next_state': next_state,
@@ -279,13 +274,13 @@ class NethackPPOAgent(TrainableAgentBase):
             'policy_entropy': jnp.mean(
                 distributions.softmax().entropy(trajectory_batch['metadata']['log_action_probs']))
         }
-        return dict_update(batch_stats, train_stats_minibatch_avg)
+        return update_pytree(batch_stats, train_stats_minibatch_avg)
 
     @partial(jax.jit, static_argnums=(0,))
     def _train_on_batch_jitted(self, train_state, rnd_train_state, trajectory_batch, rng):
         trajectory_batch = self._preprocess_batch(trajectory_batch)
 
-        def train_step_on_minibatch_body(carry, minibatch_index):
+        def train_step_on_minibatch_body(carry, nothing):
             rng, train_state, rnd_train_state = carry
 
             rng, subkey1, subkey2 = jax.random.split(rng, 3)
@@ -306,9 +301,9 @@ class NethackPPOAgent(TrainableAgentBase):
 
     def act_on_batch(self, observation_batch):
         return self._act_on_batch_jitted(
-            self._train_state, self._rnd_train_state, observation_batch, self._next_random_key())
+            self._train_state, self._rnd_train_state, observation_batch, self.next_random_key())
 
     def train_on_batch(self, trajectory_batch):
         self._train_state, self._rnd_train_state, stats = self._train_on_batch_jitted(
-            self._train_state, self._rnd_train_state, trajectory_batch, self._next_random_key())
+            self._train_state, self._rnd_train_state, trajectory_batch, self.next_random_key())
         return stats

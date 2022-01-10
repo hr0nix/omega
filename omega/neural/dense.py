@@ -9,28 +9,28 @@ class DenseNet(nn.Module):
 
     def setup(self):
         self._input_dense = nn.Dense(
-            self.dim,
-            name='{}/input_dense'.format(self.name)
+            features=self.dim,
+            name='input_dense',
         )
         self._dense = [
             nn.Dense(
-                self.dim,
-                name='{}/dense_{}'.format(self.name, block_idx)
+                features=self.dim,
+                name=f'dense_{block_idx}',
             )
             for block_idx in range(self.num_blocks)
         ]
         self._output_dense = nn.Dense(
             self.output_dim,
-            name='{}/output_dense'.format(self.name)
+            name='output_dense',
         )
         self._norm = [
             nn.LayerNorm(
-                name='{}/norm_{}'.format(self.name, block_idx)
+                name=f'norm_{block_idx}',
             )
             for block_idx in range(self.num_blocks)
         ]
         self._final_norm = nn.LayerNorm(
-            name='{}/final_norm'.format(self.name)
+            name='final_norm',
         )
 
     def _activation(self, input):

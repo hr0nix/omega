@@ -11,11 +11,9 @@ class RandomAgent(Agent):
         batch_size = observation_batch[tensor_keys[0]].shape[0]
         assert all(observation_batch[key].shape[0] == batch_size for key in tensor_keys)
 
-        return np.random.randint(
-            low=0,
-            high=self.action_space.n - 1,
-            size=(batch_size, )
-        )
+        random_actions = np.random.randint(low=0, high=self.action_space.n, size=(batch_size,))
+
+        return random_actions, {}
 
     def train_on_batch(self, trajectory_batch):
         pass

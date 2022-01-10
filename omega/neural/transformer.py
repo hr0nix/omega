@@ -70,7 +70,7 @@ class TransformerNetBase(nn.Module):
                 fc_inner_dim=self.fc_inner_dim,
                 num_heads=self.num_heads,
                 dropout_rate=self.dropout_rate,
-                name=self.name + '/block_{}'.format(block_idx),
+                name=f'block_{block_idx}',
                 deterministic=self.deterministic
             )
             for block_idx in range(self.num_blocks)

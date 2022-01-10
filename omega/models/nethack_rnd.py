@@ -5,17 +5,23 @@ import flax.linen as nn
 import jax.numpy as jnp
 import jax.random
 
-from .nethack_perceiver_model import PerceiverStateEncoder
+from .nethack_state_encoder import PerceiverNethackStateEncoder
 
 
-class RNDNetwork(nn.Module):
+class NethackRNDNetwork(nn.Module):
     state_encoder_config: Dict = field(default_factory=dict)
     output_dim: int = 32
     deterministic: Optional[bool] = None
 
     def setup(self):
-        self._state_encoder = PerceiverStateEncoder(**self.state_encoder_config)
-        self._output_network = nn.Dense(self.output_dim)
+        self._state_encoder = PerceiverNethackStateEncoder(
+            **self.state_encoder_config,
+            name='state_encoder',
+        )
+        self._output_network = nn.Dense(
+            features=self.output_dim,
+            name='output_network',
+        )
 
     def __call__(self, current_state_batch, rng, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
@@ -31,13 +37,19 @@ class RNDNetwork(nn.Module):
         return output
 
 
-class RNDNetworkPair(nn.Module):
+class NethackRNDNetworkPair(nn.Module):
     rnd_network_config: Dict = field(default_factory=dict)
     deterministic: Optional[bool] = None
 
     def setup(self):
-        self._random_network = RNDNetwork(**self.rnd_network_config)
-        self._predictor_network = RNDNetwork(**self.rnd_network_config)
+        self._random_network = NethackRNDNetwork(
+            **self.rnd_network_config,
+            name='random_network',
+        )
+        self._predictor_network = NethackRNDNetwork(
+            **self.rnd_network_config,
+            name='predictor_network',
+        )
 
     def __call__(self, current_state_batch, rng, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
