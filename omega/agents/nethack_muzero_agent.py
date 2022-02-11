@@ -308,9 +308,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             ),
             'reanalyze_avg_mcts_state_value': jnp.mean(trajectory_batch['metadata']['mcts_state_values']),
             'reanalyze_var_mcts_state_value': jnp.var(trajectory_batch['metadata']['mcts_state_values']),
-            'reanalyze_num_terminal_states_in_batch': jnp.sum(trajectory_batch['done']),
-            'reanalyze_avg_reward_in_batch': jnp.mean(trajectory_batch['rewards']),
-            'reanalyze_var_reward_in_batch': jnp.var(trajectory_batch['rewards']),
         }
         return trajectory_batch, reanalyze_stats
 
