@@ -1,9 +1,12 @@
 import abc
 from collections import deque
+from functools import partial
 
 import numpy as np
+import jax
 
 from ..utils import pytree
+from ..utils.profiling import timeit
 
 
 # TODO: ideally you'd want to save replay buffer state so that loading from checkpoint restores state fully
@@ -44,7 +47,11 @@ class FIFOReplayBuffer(ReplayBuffer):
     def sample_trajectory_batch(self, batch_size):
         random_indices = np.random.randint(low=0, high=len(self._buffer), size=batch_size)
         random_trajectories = [self._buffer[i] for i in random_indices]
-        return pytree.stack(random_trajectories, axis=0)
+        return self._make_trajectory_batch_jit(random_trajectories)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _make_trajectory_batch_jit(self, trajectories):
+        return pytree.stack(trajectories, axis=0)
 
     @property
     def size(self):
@@ -84,6 +91,10 @@ class ClusteringReplayBuffer(ReplayBuffer):
             self._buffers[i].sample_trajectory_batch(num_samples_from_cluster[i])
             for i in range(num_clusters)
         ]
+        return self._make_trajectory_batch_jit(batches_per_cluster)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _make_trajectory_batch_jit(self, batches_per_cluster):
         return pytree.concatenate(batches_per_cluster, axis=0)
 
     @property

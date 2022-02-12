@@ -1,9 +1,12 @@
 import abc
+from functools import partial
 
+import jax
 import numpy as np
 
 from ..training.batched_env_stepper import BatchedEnvStepper
 from ..utils import pytree
+from ..utils.profiling import timeit
 
 
 class Trainer(abc.ABC):
@@ -55,7 +58,12 @@ class Trainer(abc.ABC):
                 )
             )
 
-        return pytree.stack(transition_batches, axis=1)  # Stack along timestamp dimension
+        return self._stack_transition_batches(transition_batches)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _stack_transition_batches(self, transition_batches):
+        # Stack along timestamp dimension, return as GPU tensors
+        return pytree.stack(transition_batches, axis=1, result_device='gpu')
 
     @abc.abstractmethod
     def _run_night(self, agent, stats, collected_trajectories):
