@@ -8,7 +8,7 @@ import chex
 
 from omega.neural import TransformerNet
 
-from ..utils.pytree import add_batch_dim, remove_batch_dim
+from ..utils import pytree
 from .nethack_state_encoder import PerceiverNethackStateEncoder
 from .base import ItemSelector, ItemPredictor
 
@@ -101,8 +101,8 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         dynamics_function_key, reward_predictor_key = jax.random.split(rng)
 
         # TODO: rewrite layers so that they don't assume that the batch dimension is present
-        previous_latent_state = add_batch_dim(previous_latent_state)
-        action = add_batch_dim(action)
+        previous_latent_state = pytree.expand_dims(previous_latent_state, axis=0)
+        action = pytree.expand_dims(action, axis=0)
 
         action_embedding = self._action_embedder(action)
         action_embedding = jnp.expand_dims(action_embedding, axis=-2)
@@ -119,8 +119,8 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         chex.assert_axis_dimension(next_latent_state, 0, 1)
         chex.assert_axis_dimension(log_reward_probs, 0, 1)
         return (
-            remove_batch_dim(next_latent_state),
-            remove_batch_dim(log_reward_probs),
+            pytree.squeeze(next_latent_state, axis=0),
+            pytree.squeeze(log_reward_probs, axis=0),
         )
 
     def prediction(self, latent_state, rng, deterministic=None):
@@ -133,11 +133,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
         policy_network_key, value_predictor_key = jax.random.split(rng)
 
-        latent_state = add_batch_dim(latent_state)
+        latent_state = pytree.expand_dims(latent_state, axis=0)
 
         all_actions = jnp.arange(0, self.num_actions, dtype=jnp.int32)
         all_action_embeddings = self._action_embedder(all_actions)
-        all_action_embeddings = add_batch_dim(all_action_embeddings)
+        all_action_embeddings = pytree.expand_dims(all_action_embeddings, axis=0)
         log_action_probs = self._policy_network(
             all_action_embeddings, latent_state, deterministic=deterministic, rng=policy_network_key)
 
@@ -149,4 +149,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         chex.assert_rank([log_action_probs, value], [2, 1])
         chex.assert_axis_dimension(log_action_probs, 0, 1)
         chex.assert_axis_dimension(value, 0, 1)
-        return remove_batch_dim(log_action_probs), remove_batch_dim(value)
+        return (
+            pytree.squeeze(log_action_probs, axis=0),
+            pytree.squeeze(value, axis=0)
+        )

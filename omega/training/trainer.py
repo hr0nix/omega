@@ -1,11 +1,9 @@
 import abc
-from functools import partial
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 from ..training.batched_env_stepper import BatchedEnvStepper
+from ..utils import pytree
 
 
 class Trainer(abc.ABC):
@@ -57,14 +55,7 @@ class Trainer(abc.ABC):
                 )
             )
 
-        return self._batch_trajectories(transition_batches)
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _batch_trajectories(self, transition_batches):
-        return jax.tree_map(
-            lambda *leaves: jnp.stack(leaves, axis=1),  # Stack along timestamp dimension
-            *transition_batches,
-        )
+        return pytree.stack(transition_batches, axis=1)  # Stack along timestamp dimension
 
     @abc.abstractmethod
     def _run_night(self, agent, stats, collected_trajectories):

@@ -2,7 +2,7 @@ import jax.lax
 import jax.numpy as jnp
 import jax.experimental.host_callback
 
-from ..utils.pytree import copy_pytree
+from ..utils import pytree
 
 
 def get_child_index(tree, node_index, action_index):
@@ -36,7 +36,7 @@ def get_normalized_value(tree, value):
 
 def update_value_normalization(tree, value):
     min_max_not_initialized = jnp.allclose(tree['min_max_value'], 0.0)
-    tree = copy_pytree(tree)
+    tree = pytree.copy(tree)
     tree['min_max_value'] = jax.lax.cond(
         pred=min_max_not_initialized,
         true_fun=lambda _: jnp.ones(2, dtype=jnp.float32) * value,
@@ -221,22 +221,26 @@ def mcts(
         dirichlet_noise_alpha, root_exploration_fraction)
 
     def simulation_iteration(simulation_index, loop_state):
-        rng, tree = loop_state
+        rng, tree, max_depth = loop_state
         rng, expansion_key = jax.random.split(rng)
 
         leaf_index, leaf_depth = simulate(tree, discount_factor, puct_c1)
         expanded_tree = expand(tree, leaf_index, prediction_fn, dynamics_fn, expansion_key)
         backproped_tree = backprop(expanded_tree, leaf_index, discount_factor)
 
-        return rng, backproped_tree
+        return rng, backproped_tree, jnp.maximum(max_depth, leaf_depth)
 
-    _, updated_tree = jax.lax.fori_loop(
+    _, updated_tree, max_depth = jax.lax.fori_loop(
         lower=0, upper=num_simulations, body_fun=simulation_iteration,
-        init_val=(simulation_loop_key, tree)
+        init_val=(simulation_loop_key, tree, 0)
     )
 
     root_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
     root_value = get_state_value(tree=updated_tree, node_index=0)
 
-    return root_policy_log_probs, root_value
+    stats = {
+        'mcts_search_depth': max_depth,
+    }
+
+    return root_policy_log_probs, root_value, stats
 

@@ -12,7 +12,7 @@ import optax
 import rlax
 from rlax._src import distributions
 
-from ..utils.pytree import update_pytree
+from ..utils import pytree
 from .trainable_agent import JaxTrainableAgentBase
 from ..neural.optimization import clip_gradient_by_norm
 from ..models import NethackRNDNetworkPair, NethackPerceiverActorCriticModel
@@ -140,7 +140,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             rng, subkey = jax.random.split(rng)
             rnd_loss = rnd_train_state.apply_fn(
                 rnd_train_state.params, observation_batch, deterministic=True, rng=subkey)
-            metadata = update_pytree(metadata, {
+            metadata = pytree.update(metadata, {
                 'rnd_loss': rnd_loss,
             })
 
@@ -204,7 +204,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             rnd_grads, rnd_stats = rnd_grad_and_stats(
                 rnd_train_state.params, rnd_train_state, trajectory_minibatch, subkey2)
             rnd_train_state = rnd_train_state.apply_gradients(grads=rnd_grads)
-            stats = update_pytree(stats, rnd_stats)
+            stats = pytree.update(stats, rnd_stats)
 
         return train_state, rnd_train_state, stats
 
@@ -212,9 +212,8 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         key1, key2 = jax.random.split(rng)
 
         minibatch_size = self._config['minibatch_size']
-        some_tensor = jax.tree_leaves(trajectory_batch)[0]
-        num_trajectories = some_tensor.shape[0]
-        num_timestamps = some_tensor.shape[1]
+        num_trajectories = pytree.get_axis_dim(trajectory_batch, axis=0)
+        num_timestamps = pytree.get_axis_dim(trajectory_batch, axis=1)
 
         trajectory_indices = jax.random.randint(key1, (minibatch_size,), 0, num_trajectories)
         timestamp_indices = jax.random.randint(key2, (minibatch_size,), 0, num_timestamps)
@@ -256,7 +255,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
 
         # Add the values we just computed to the batch
-        trajectory_batch = update_pytree(trajectory_batch, {
+        trajectory_batch = pytree.update(trajectory_batch, {
             'advantage': advantage,
             'value_targets': value_targets,
             'next_state': next_state,
@@ -274,7 +273,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             'policy_entropy': jnp.mean(
                 distributions.softmax().entropy(trajectory_batch['metadata']['log_action_probs']))
         }
-        return update_pytree(batch_stats, train_stats_minibatch_avg)
+        return pytree.update(batch_stats, train_stats_minibatch_avg)
 
     @partial(jax.jit, static_argnums=(0,))
     def _train_on_batch_jitted(self, train_state, rnd_train_state, trajectory_batch, rng):

@@ -2,17 +2,18 @@ import argparse
 import yaml
 import tqdm
 import ray
-
 import gym
 import minihack
+
+import numpy as np
 
 import clu.metric_writers
 
 from absl import logging
 logging.set_verbosity(logging.INFO)
 
-from omega.agents import NethackPPOAgent, NethackMuZeroAgent
-from omega.training import OnPolicyTrainer
+from omega.agents import NethackMuZeroAgent
+from omega.training import OnPolicyTrainer, ClusteringReplayBuffer
 from omega.evaluation import EvaluationStats
 from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
@@ -48,8 +49,14 @@ def main(args):
 
     env_factory = lambda: make_env(train_config, game_logs_dir=args.game_logs)
     env = env_factory()
-    # agent = NethackPPOAgent(env.observation_space, env.action_space, config=config['agent_config'])
-    agent = NethackMuZeroAgent(env.observation_space, env.action_space, config=config['agent_config'])
+    replay_buffer = ClusteringReplayBuffer(
+        cluster_buffer_size=config['train_config']['replay_buffer_size'] // 2, num_clusters=2,
+        clustering_fn=lambda t: 1 if np.sum(t['rewards']) > 0.5 else 0,  # Uniform over good and bad trajectories
+    )
+    agent = NethackMuZeroAgent(
+        replay_buffer=replay_buffer,
+        observation_space=env.observation_space,
+        action_space=env.action_space, config=config['agent_config'])
     trainer = OnPolicyTrainer(
         env_factory=env_factory,
         num_workers=train_config['num_workers'],

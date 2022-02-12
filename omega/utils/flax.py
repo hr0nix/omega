@@ -1,7 +1,7 @@
 import flax
 import flax.traverse_util
 
-from .pytree import update_pytree
+from . import pytree
 
 
 def flatten_params(params):
@@ -24,5 +24,5 @@ def unflatten_params(flat_params):
 
 def merge_params(*params):
     flat_params = [flatten_params(p) for p in params]
-    merged_params = update_pytree(flat_params[0], *flat_params[1:])
+    merged_params = pytree.update(flat_params[0], *flat_params[1:])
     return unflatten_params(merged_params)
