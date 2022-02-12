@@ -262,11 +262,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     current_latent_states, reward_log_probs = batch_dynamics_fn(
                         params, current_latent_states, actions, dynamics_key_batch)
 
-                    step_value_loss = self._config['value_loss_weight'] * rlax.l2_loss(state_values, value_targets)
-                    step_reward_loss = self._config['reward_loss_weight'] * jax.vmap(rlax.categorical_cross_entropy)(
-                        reward_targets, reward_log_probs)
-                    step_policy_loss = self._config['policy_loss_weight'] * jax.vmap(rlax.categorical_cross_entropy)(
-                        policy_targets, policy_log_probs)
+                    step_value_loss = rlax.l2_loss(state_values, value_targets)
+                    step_reward_loss = jax.vmap(rlax.categorical_cross_entropy)(reward_targets, reward_log_probs)
+                    step_policy_loss = jax.vmap(rlax.categorical_cross_entropy)(policy_targets, policy_log_probs)
 
                     # Mask out every timestamp for which we don't have a valid target
                     # Also apply loss scaling to make loss timestamp-independent
@@ -276,8 +274,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     policy_loss += jnp.sum(loss_mask * step_policy_loss) * loss_scale
 
                     # See EfficientZero paper (https://arxiv.org/abs/2111.00210)
-                    step_state_similarity_loss = self._config['state_similarity_loss_weight'] * jnp.mean(rlax.l2_loss(
-                        current_latent_states, state_targets))
+                    step_state_similarity_loss = jnp.mean(rlax.l2_loss(current_latent_states, state_targets))
                     state_similarity_loss_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
                     state_similarity_loss += (
                         jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
@@ -289,7 +286,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
                 state_similarity_loss /= num_unroll_steps
-                loss = value_loss + reward_loss + policy_loss + state_similarity_loss
+                loss = (
+                    self._config['value_loss_weight'] * value_loss +
+                    self._config['reward_loss_weight'] * reward_loss +
+                    self._config['policy_loss_weight'] * policy_loss +
+                    self._config['state_similarity_loss_weight'] * state_similarity_loss
+                )
 
                 return loss, {
                     'value_loss' : value_loss,
