@@ -30,7 +30,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'lr': 1e-3,
         'discount_factor': 0.99,
-        'value_estimation_lambda': 0.9,
         'model_config': {},
         'replay_buffer_size': 10000,
         'num_mcts_simulations': 30,
@@ -42,6 +41,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'policy_loss_weight': 1.0,
         'value_loss_weight': 1.0,
         'reward_loss_weight': 1.0,
+        'state_similarity_loss_weight': 1.0,
         'reward_lookup': {
             -0.01: 0,
             0.0: 1,
@@ -217,16 +217,30 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def loss_function(params, rng):
             def trajectory_loss(params, trajectory, rng):
                 rng, representation_key = jax.random.split(rng)
-                trajectory_latent_states = train_state.representation_fn(
-                    params, trajectory['current_state'], deterministic=False, rng=representation_key)
 
                 num_unroll_steps = self._config['num_train_unroll_steps']
+
+                trajectory_latent_states = train_state.representation_fn(
+                    params, trajectory['current_state'], deterministic=False, rng=representation_key)
+                # Unrolls in the end of trajectory will not have next state targets
+                trajectory_latent_states_padded = jnp.concatenate(
+                    [
+                        trajectory_latent_states,
+                        jnp.zeros(
+                            shape=(num_unroll_steps + 1,) + trajectory_latent_states.shape[1:],
+                            dtype=jnp.float32
+                        )
+                    ],
+                    axis=0,
+                )
+
                 num_timestamps = trajectory_latent_states.shape[0]
 
                 current_latent_states = trajectory_latent_states
                 value_loss = 0.0
                 reward_loss = 0.0
                 policy_loss = 0.0
+                state_similarity_loss = 0.0
                 for unroll_step in range(num_unroll_steps):  # TODO: lax.fori ?
                     rng, prediction_key, dynamics_key = jax.random.split(rng, 3)
 
@@ -235,6 +249,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     value_targets = trajectory['training_targets']['value'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['rewards_one_hot'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
+                    state_targets = jax.lax.stop_gradient(trajectory_latent_states_padded[
+                        unroll_step + 1: unroll_step + 1 + num_timestamps
+                    ])
 
                     batch_prediction_fn = jax.vmap(train_state.prediction_fn, in_axes=(None, 0, 0), out_axes=0)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
@@ -259,16 +276,28 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     reward_loss += jnp.sum(loss_mask * step_reward_loss) * loss_scale
                     policy_loss += jnp.sum(loss_mask * step_policy_loss) * loss_scale
 
+                    # See EfficientZero paper (https://arxiv.org/abs/2111.00210)
+                    step_state_similarity_loss = self._config['state_similarity_loss_weight'] * jnp.mean(rlax.l2_loss(
+                        current_latent_states, state_targets))
+                    state_similarity_loss_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
+                    state_similarity_loss += (
+                        jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
+                        jnp.sum(state_similarity_loss_mask)
+                    )
+
                 # Also make loss independent of num_unroll_steps
                 value_loss /= num_unroll_steps
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
-                loss = value_loss + reward_loss + policy_loss
+                state_similarity_loss /= num_unroll_steps
+                loss = value_loss + reward_loss + policy_loss + state_similarity_loss
 
                 return loss, {
                     'value_loss' : value_loss,
                     'reward_loss': reward_loss,
                     'policy_loss': policy_loss,
+                    'state_similarity_loss': state_similarity_loss,
+                    'muzero_loss': loss,
                 }
 
             representation_key, batch_loss_key = jax.random.split(rng)
@@ -280,9 +309,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             loss = jnp.mean(per_trajectory_losses)
             loss_details = jax.tree_map(lambda l : jnp.mean(l), loss_details)
 
-            return loss, update_pytree(loss_details, {
-                'muzero_loss': loss,
-            })
+            return loss, loss_details
 
         rng, grad_key = jax.random.split(rng)
         grad_and_stats_func = jax.grad(loss_function, argnums=0, has_aux=True)
@@ -331,7 +358,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             # Allocate memory for training targets
             trajectory = update_pytree(trajectory, {
                 'training_targets': {
-
                     'value': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'rewards_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'policy': jnp.zeros((num_timestamps, num_unroll_steps, num_actions), dtype=jnp.float32),

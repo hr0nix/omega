@@ -94,7 +94,7 @@ class ItemPredictor(nn.Module):
             name='output_embedder'
         )
         self._scalar_producer = nn.Dense(
-            features=self.num_outputs,
+            features=1,
             name='scalar_producer',
         )
 
@@ -106,5 +106,6 @@ class ItemPredictor(nn.Module):
         output_embeddings = self._output_transformer(
             output_embeddings, memory, deterministic=deterministic, rng=subkey)
         outputs = self._scalar_producer(output_embeddings)
+        outputs = jnp.squeeze(outputs, -1)
 
         return outputs

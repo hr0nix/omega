@@ -107,17 +107,21 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         action_embedding = self._action_embedder(action)
         action_embedding = jnp.expand_dims(action_embedding, axis=-2)
         previous_latent_state_with_action = action_embedding + previous_latent_state
+
         next_latent_state = self._dynamics_transformer(
             previous_latent_state_with_action, deterministic=deterministic, rng=dynamics_function_key)
+
         log_reward_probs = self._reward_predictor(
-            previous_latent_state_with_action, deterministic=deterministic, rng=reward_predictor_key)[..., 0]
+            previous_latent_state_with_action, deterministic=deterministic, rng=reward_predictor_key)
         log_reward_probs = jax.nn.log_softmax(log_reward_probs, axis=-1)
 
         chex.assert_rank([next_latent_state, log_reward_probs], [3, 2])
         chex.assert_axis_dimension(next_latent_state, 0, 1)
         chex.assert_axis_dimension(log_reward_probs, 0, 1)
-        return remove_batch_dim(next_latent_state), remove_batch_dim(log_reward_probs)
-
+        return (
+            remove_batch_dim(next_latent_state),
+            remove_batch_dim(log_reward_probs),
+        )
 
     def prediction(self, latent_state, rng, deterministic=None):
         """
@@ -137,7 +141,10 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         log_action_probs = self._policy_network(
             all_action_embeddings, latent_state, deterministic=deterministic, rng=policy_network_key)
 
-        value = self._value_predictor(latent_state, deterministic=deterministic, rng=value_predictor_key)[..., 0, 0]
+        value = jnp.squeeze(
+            self._value_predictor(latent_state, deterministic=deterministic, rng=value_predictor_key),
+            axis=-1
+        )
 
         chex.assert_rank([log_action_probs, value], [2, 1])
         chex.assert_axis_dimension(log_action_probs, 0, 1)
