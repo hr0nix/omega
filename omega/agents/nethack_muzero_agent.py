@@ -226,12 +226,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     [
                         trajectory_latent_states,
                         jnp.zeros(
-                            shape=(num_unroll_steps + 1,) + trajectory_latent_states.shape[1:],
-                            dtype=jnp.float32
+                            shape=(num_unroll_steps + 1,) + trajectory_latent_states.shape[1:], dtype=jnp.float32
                         )
                     ],
                     axis=0,
                 )
+                trajectory_done_padded = jnp.concatenate(
+                    [trajectory['done'], jnp.zeros(num_unroll_steps, dtype=jnp.bool_)], axis=0)
 
                 num_timestamps = trajectory_latent_states.shape[0]
 
@@ -248,9 +249,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     value_targets = trajectory['training_targets']['value'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['rewards_one_hot'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
-                    state_targets = jax.lax.stop_gradient(trajectory_latent_states_padded[
-                        unroll_step + 1: unroll_step + 1 + num_timestamps
-                    ])
+                    state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
 
                     batch_prediction_fn = jax.vmap(train_state.prediction_fn, in_axes=(None, 0, 0), out_axes=0)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
@@ -275,10 +274,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                     # See EfficientZero paper (https://arxiv.org/abs/2111.00210)
                     step_state_similarity_loss = jnp.mean(rlax.l2_loss(current_latent_states, state_targets))
+                    # We don't have targets in the end of trajectory
                     state_similarity_loss_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
+                    # We also don't have targets after terminal states
+                    state_similarity_loss_mask *= 1.0 - trajectory_done_padded[unroll_step:unroll_step + num_timestamps]
                     state_similarity_loss += (
                         jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
-                        jnp.sum(state_similarity_loss_mask)
+                        (jnp.sum(state_similarity_loss_mask) + 1e-10)  # Just in case
                     )
 
                 # Also make loss independent of num_unroll_steps
