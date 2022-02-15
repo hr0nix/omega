@@ -47,11 +47,7 @@ class FIFOReplayBuffer(ReplayBuffer):
     def sample_trajectory_batch(self, batch_size):
         random_indices = np.random.randint(low=0, high=len(self._buffer), size=batch_size)
         random_trajectories = [self._buffer[i] for i in random_indices]
-        return self._make_trajectory_batch_jit(random_trajectories)
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _make_trajectory_batch_jit(self, trajectories):
-        return pytree.stack(trajectories, axis=0)
+        return pytree.stack(random_trajectories, axis=0)
 
     @property
     def size(self):
@@ -73,28 +69,32 @@ class ClusteringReplayBuffer(ReplayBuffer):
         batch_size = pytree.get_axis_dim(trajectory_batch, axis=0)
         for trajectory_idx in range(batch_size):
             trajectory = pytree.slice_from_batch(trajectory_batch, trajectory_idx)
-            cluster = self._clustering_fn(trajectory)
-            assert 0 <= cluster < len(self._buffers)
+            cluster_id = self._clustering_fn(trajectory)
+            assert 0 <= cluster_id < len(self._buffers)
             trajectory_as_batch = pytree.expand_dims(trajectory, axis=0)
             assert pytree.is_cpu(trajectory_as_batch)  # Make sure we didn't copy back to GPU by mistake
-            self._buffers[cluster].add_trajectory_batch(trajectory_as_batch)
+            self._buffers[cluster_id].add_trajectory_batch(trajectory_as_batch)
 
     def sample_trajectory_batch(self, batch_size):
         num_clusters = len(self._buffers)
+        # Some clusters might still be empty because we didn't see trajectories that fit there
+        active_clusters = set(
+            cluster_id for cluster_id in range(num_clusters) if not self._buffers[cluster_id].empty
+        )
+        num_active_clusters = len(active_clusters)
+        assert num_active_clusters > 0
+
+        # Distribute batch size between all active clusters
         num_samples_from_cluster = [
-            batch_size // num_clusters + (1 if i < batch_size % num_clusters else 0)
-            for i in range(num_clusters)
+            batch_size // num_active_clusters + (1 if cluster_id < batch_size % num_active_clusters else 0)
+            for cluster_id in active_clusters
         ]
         assert sum(num_samples_from_cluster) == batch_size
 
         batches_per_cluster = [
-            self._buffers[i].sample_trajectory_batch(num_samples_from_cluster[i])
-            for i in range(num_clusters)
+            self._buffers[cluster_id].sample_trajectory_batch(num_samples_from_cluster[active_cluster_idx])
+            for active_cluster_idx, cluster_id in enumerate(active_clusters)
         ]
-        return self._make_trajectory_batch_jit(batches_per_cluster)
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _make_trajectory_batch_jit(self, batches_per_cluster):
         return pytree.concatenate(batches_per_cluster, axis=0)
 
     @property
@@ -103,6 +103,6 @@ class ClusteringReplayBuffer(ReplayBuffer):
 
     def get_stats(self):
         return {
-            f'replay_buffer_size_cl_{i}': self._buffers[i].size
-            for i in range(len(self._buffers))
+            f'replay_buffer_size_cl_{cluster_id}': self._buffers[cluster_id].size
+            for cluster_id in range(len(self._buffers))
         }
