@@ -3,9 +3,20 @@ import jax.nn
 import jax.numpy as jnp
 
 
+def round_to_closest_canonic_value(values, canonic_values):
+    chex.assert_rank(canonic_values, 1)
+
+    values = jnp.expand_dims(values, 1)
+    values_keys_diff = jnp.abs(values - canonic_values)
+    best_canonic_value_indices = jnp.argmin(values_keys_diff, axis=-1)
+
+    return canonic_values[best_canonic_value_indices]
+
+
 def discretize(values, lookup):
     chex.assert_type(values, jnp.float32)
 
+    values = round_to_closest_canonic_value(values, jnp.array(list(lookup.keys())))
     zeros = jnp.zeros_like(values, dtype=jnp.int32)
     result = zeros
     # TODO: this isn't too fast, can be done in linear time (vmap?)
