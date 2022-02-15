@@ -1,8 +1,8 @@
-import jax
 import numpy as np
 import ray
 
 from .env_wrapper import EnvWrapper
+from ..utils import pytree
 
 
 @ray.remote
@@ -12,17 +12,10 @@ class Worker(object):
         for env in self._envs:
             env.reset()
 
-    @staticmethod
-    def _stack_states(states):
-        return jax.tree_map(
-            lambda *leaves: np.stack(leaves, axis=0),  # Stack along batch axis
-            *states,
-        )
-
     def get_current_state(self):
         current_states = [env.current_state for env in self._envs]
         return {
-            'current_state': self._stack_states(current_states),
+            'current_state': pytree.stack(current_states, axis=0),
         }
 
     def step(self, action_batch):
@@ -43,7 +36,7 @@ class Worker(object):
         return {
             'rewards': np.asarray(reward_per_env, dtype=np.float),
             'done': np.asarray(done_per_env, dtype=np.bool_),
-            'next_state': self._stack_states(next_state_per_env),
+            'next_state': pytree.stack(next_state_per_env, axis=0),
         }
 
 
@@ -59,18 +52,12 @@ class BatchedEnvStepper(object):
             for worker_index in range(num_workers)
         ]
 
-    @staticmethod
-    def _concat_worker_results(results):
-        return jax.tree_map(
-            lambda *leaves: np.concatenate(leaves, axis=0),  # Concatenate along batch axis
-            *results,
-        )
-
     def get_current_state(self):
         current_state_promises = [
             worker.get_current_state.remote() for worker in self._workers
         ]
-        return self._concat_worker_results(ray.get(current_state_promises))
+        current_states = ray.get(current_state_promises)
+        return pytree.concatenate(current_states, axis=0)
 
     def step(self, action_batch):
         prev_index = 0
@@ -80,4 +67,5 @@ class BatchedEnvStepper(object):
                 action_batch[prev_index:prev_index + self._num_envs_per_worker[worker_index]])
             worker_result_promises.append(worker_result_promise)
             prev_index += self._num_envs_per_worker[worker_index]
-        return self._concat_worker_results(ray.get(worker_result_promises))
+        worker_results = ray.get(worker_result_promises)
+        return pytree.concatenate(worker_results, axis=0)
