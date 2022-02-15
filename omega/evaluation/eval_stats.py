@@ -1,6 +1,8 @@
 import numpy as np
 import jax.numpy as jnp
 
+from omega.utils import pytree
+
 from dataclasses import dataclass, field
 from collections import defaultdict
 from typing import List, Optional
@@ -40,6 +42,7 @@ class EvaluationStats(object):
         self._finished_episode_stats = list()
         self._total_steps = 0
         self._num_finished_episodes = 0
+        self._unique_rewards = set()
 
     def add_rolling_stats(self, values_dict):
         for key, value in values_dict.items():
@@ -55,6 +58,8 @@ class EvaluationStats(object):
         stats = self._running_episode_stats[episode_index]
         stats.actions.append(action)
         stats.rewards.append(reward)
+
+        self._unique_rewards.add(reward)
 
         if done:
             final_stats = self._finalize_episode_stats(stats)
@@ -84,7 +89,7 @@ class EvaluationStats(object):
             'last_episode_steps': self._finished_episode_stats[-1].num_steps,
             'last_100_episode_avg_reward': np.mean(
                 [s.reward_sum for s in self._finished_episode_stats[-self.AVERAGE_REWARD_OVER_NUM_EPISODES:]]
-            )
+            ),
         }
         if include_rolling_stats:
             result.update({
@@ -99,6 +104,9 @@ class EvaluationStats(object):
             return
 
         stats = self.to_dict(include_rolling_stats=False)
+        stats = pytree.update(stats, {
+            'unique_rewards': self._unique_rewards,
+        })
         title = title or 'Evaluation summary:'
 
         print(title, flush=True)
@@ -108,6 +116,7 @@ class EvaluationStats(object):
             ('Last episode total reward', 'last_episode_total_reward'),
             ('Last episode steps', 'last_episode_steps'),
             ('Last 100 episodes avg reward', 'last_100_episode_avg_reward'),
+            ('Unique rewards', 'unique_rewards'),
         ]:
             print('  {}: {}'.format(key_title, stats[key]), flush=True)
 
