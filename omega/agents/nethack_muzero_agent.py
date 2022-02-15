@@ -3,12 +3,14 @@ import functools
 from functools import partial
 from typing import Callable
 
+import random
 from absl import logging
 
 import chex
 import flax.struct
 import flax.training.train_state
 import flax.training.checkpoints
+import numpy as np
 import jax.numpy as jnp
 import jax.random
 import jax.tree_util
@@ -35,16 +37,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'mcts_dirichlet_noise_alpha': 0.2,
         'mcts_root_exploration_fraction': 0.2,
         'num_train_unroll_steps': 5,
+        'num_train_steps': 1,
         'reanalyze_batch_size': 8,
         'policy_loss_weight': 1.0,
         'value_loss_weight': 1.0,
         'reward_loss_weight': 1.0,
         'state_similarity_loss_weight': 1.0,
-        'reward_lookup': {
-            -0.01: 0,
-            0.0: 1,
-            1.0: 2,
-        }
+        # TODO: we need an assert somewhere that there are no rewards outside of this
+        'reward_values': [-0.01, 0.0, 1.0],
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -57,14 +57,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         super(NethackMuZeroAgent, self).__init__(*args, **kwargs)
 
         self._config = self.CONFIG.copy(config or {})
-        # TODO: MuZero uses prioritized replay
+        self._reward_lookup = {
+            self._config['reward_values'][i]: i
+            for i in range(len(self._config['reward_values']))
+        }
         self._replay_buffer = replay_buffer
         self._build_model(model_factory)
 
     def _build_model(self, model_factory):
         self._model = model_factory(
             num_actions=self.action_space.n, **self._config['model_config'],
-            reward_dim=len(self._config['reward_lookup']),
+            reward_dim=len(self._reward_lookup),
             name='mu_zero_model')
 
         representation_params = self._model.init(
@@ -88,12 +91,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._train_state = self.TrainState.create(
             params=model_params, tx=optimizer,
             apply_fn=self._model.apply,
-            representation_fn=functools.partial(
-                self._model.apply, method=self._model.representation, deterministic=False),
-            dynamics_fn=functools.partial(
-                self._model.apply, method=self._model.dynamics, deterministic=False),
-            prediction_fn=functools.partial(
-                self._model.apply, method=self._model.prediction, deterministic=False),
+            representation_fn=functools.partial(self._model.apply, method=self._model.representation),
+            dynamics_fn=functools.partial(self._model.apply, method=self._model.dynamics),
+            prediction_fn=functools.partial(self._model.apply, method=self._model.prediction),
         )
 
     def _make_fake_observation_trajectory(self):
@@ -134,17 +134,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             checkpoint_path, self._train_state, step=step, keep=1, overwrite=True)
 
     def train_on_batch(self, trajectory_batch):
-        if not self._replay_buffer.empty:
-            training_batch, reanalyse_stats = self._make_next_training_batch(trajectory_batch)
-            training_stats = self._train(training_batch)
-            stats = pytree.update(reanalyse_stats, training_stats)
-        else:
-            # Skip the first training step while the replay buffer is still empty
-            stats = {}
-
-        # Add training data after reanalyze so that we don't try to reanalyze most recent  trajectories
+        # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
+        # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
         self._replay_buffer.add_trajectory_batch(trajectory_batch)
 
+        stats_per_train_step = []
+        for train_step in range(self._config['num_train_steps']):
+            training_batch, reanalyse_stats = self._make_next_training_batch()
+            training_stats = self._train(training_batch)
+            stats_per_train_step.append(pytree.update(reanalyse_stats, training_stats))
+
+        stats = pytree.array_mean(stats_per_train_step, result_device='cpu')
         return stats
 
     def act_on_batch(self, observation_batch):
@@ -155,21 +155,24 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
-        represent_observation_trajectory_batch = jax.vmap(train_state.representation_fn, in_axes=(None, 0, 0))
+        # TODO: using deterministic predictions in MCTS seems to perform worse
+        representation_fn = functools.partial(train_state.representation_fn, deterministic=False)
+        represent_observation_trajectory_batch = jax.vmap(representation_fn, in_axes=(None, 0, 0))
         represenation_key_batch = jax.random.split(representation_key, batch_size)
         latent_state_trajectory_batch = represent_observation_trajectory_batch(
             train_state.params, observation_trajectory_batch, represenation_key_batch)
 
-        def dynamics_fn(params, state, action, rng):
-            next_state, reward_logits = train_state.dynamics_fn(params, state, action, rng)
+        def dynamics_fn(params, state, action, rng, deterministic):
+            next_state, reward_logits = train_state.dynamics_fn(
+                params, state, action, rng, deterministic=deterministic)
             # Convert reward back to continuous form
-            return next_state, undiscretize_expected(reward_logits, self._config['reward_lookup'])
+            return next_state, undiscretize_expected(reward_logits, self._reward_lookup)
 
         mcts_func = functools.partial(
             mcts,
             num_actions=self.action_space.n,
-            prediction_fn=jax.tree_util.Partial(train_state.prediction_fn, train_state.params),
-            dynamics_fn=jax.tree_util.Partial(dynamics_fn, train_state.params),
+            prediction_fn=jax.tree_util.Partial(train_state.prediction_fn, train_state.params, deterministic=False),
+            dynamics_fn=jax.tree_util.Partial(dynamics_fn, train_state.params, deterministic=False),
             discount_factor=self._config['discount_factor'],
             num_simulations=self._config['num_mcts_simulations'],
             puct_c1=self._config['mcts_puct_c1'],
@@ -251,12 +254,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
 
-                    batch_prediction_fn = jax.vmap(train_state.prediction_fn, in_axes=(None, 0, 0), out_axes=0)
+                    prediction_fn = functools.partial(train_state.prediction_fn, deterministic=False)
+                    batch_prediction_fn = jax.vmap(prediction_fn, in_axes=(None, 0, 0), out_axes=0)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
                     policy_log_probs, state_values = batch_prediction_fn(
                         params, current_latent_states, prediction_key_batch)
 
-                    batch_dynamics_fn = jax.vmap(train_state.dynamics_fn, in_axes=(None, 0, 0, 0), out_axes=0)
+                    dynamics_fn = functools.partial(train_state.dynamics_fn, deterministic=False)
+                    batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(None, 0, 0, 0), out_axes=0)
                     dynamics_key_batch = jax.random.split(dynamics_key, num_timestamps)
                     current_latent_states, reward_log_probs = batch_dynamics_fn(
                         params, current_latent_states, actions, dynamics_key_batch)
@@ -320,8 +325,19 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return train_state, stats
 
+    # TODO: for some reason total execution time of this function
+    # TODO: is 200 ms more than _make_next_training_batch_jit + sample_trajectory_batch
+    def _make_next_training_batch(self):
+        trajectory_batch = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
+        return self._make_next_training_batch_jit(self._train_state, trajectory_batch, self.next_random_key())
+
     @partial(jax.jit, static_argnums=(0,))
-    def _reanalyze_jit(self, train_state, trajectory_batch, rng):
+    def _make_next_training_batch_jit(self, train_state, trajectory_batch, rng):
+        trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze(train_state, trajectory_batch, rng)
+        trajectory_batch_with_training_targets = self._prepare_training_targets(trajectory_batch_with_mcts_stats)
+        return trajectory_batch_with_training_targets, reanalyze_stats
+
+    def _reanalyze(self, train_state, trajectory_batch, rng):
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
         mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
             trajectory_batch['current_state'], train_state, rng)
@@ -341,14 +357,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         reanalyze_stats = pytree.update(reanalyze_stats, pytree.mean(mcts_stats))
         return trajectory_batch, reanalyze_stats
 
-    def _reanalyze(self):
-        trajectory_batch = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
-        trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze_jit(
-            self._train_state, trajectory_batch, self.next_random_key())
-        return trajectory_batch_with_mcts_stats, reanalyze_stats
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _make_training_batch_jit(self, trajectory_batch_from_acting, trajectory_batch_from_reanalyze):
+    def _prepare_training_targets(self, trajectory_batch):
         def make_training_trajectory(trajectory):
             num_timestamps = pytree.get_axis_dim(trajectory, axis=0)
             num_unroll_steps = self._config['num_train_unroll_steps']
@@ -387,9 +396,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 'log_mcts_action_probs': jnp.concatenate(
                     [
                         trajectory['metadata']['log_mcts_action_probs'],
-                        jnp.ones(
-                            shape=(num_unroll_steps - 1, self.action_space.n), dtype=jnp.float32
-                        ) * jnp.log(1.0 / self.action_space.n),
+                        jnp.full(
+                            shape=(num_unroll_steps - 1, self.action_space.n),
+                            fill_value=jnp.log(1.0 / self.action_space.n)
+                        ),
                     ],
                     axis=-2
                 )
@@ -421,7 +431,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 mcts_action_probs_slice = jnp.exp(log_mcts_action_probs_slice)
                 policy_target_probs = (
                     mcts_action_probs_slice * (1.0 - current_done_extra_dim) +
-                    jnp.ones_like(mcts_action_probs_slice) / self.action_space.n * current_done_extra_dim
+                    jnp.full_like(mcts_action_probs_slice, 1.0 / self.action_space.n) * current_done_extra_dim
                 )
 
                 current_done = jnp.logical_or(
@@ -448,19 +458,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
             # Add one-hot rewards for discrete reward prediction
             trajectory_with_targets['training_targets']['rewards_one_hot'] = discretize_onehot(
-                trajectory_with_targets['training_targets']['rewards_scalar'], self._config['reward_lookup'])
+                trajectory_with_targets['training_targets']['rewards_scalar'], self._reward_lookup)
 
             return trajectory_with_targets
 
-        trajectory_batch = jax.tree_map(
-            lambda leaf1, leaf2: jnp.concatenate([leaf1, leaf2], axis=0),
-            trajectory_batch_from_acting, trajectory_batch_from_reanalyze,
-        )
         return jax.vmap(make_training_trajectory)(trajectory_batch)
-
-    def _make_next_training_batch(self, trajectory_batch_from_acting):
-        trajectory_batch_from_reanalyse, reanalyze_stats = self._reanalyze()
-        return (
-            self._make_training_batch_jit(trajectory_batch_from_acting, trajectory_batch_from_reanalyse),
-            reanalyze_stats
-        )

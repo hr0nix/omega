@@ -1,3 +1,5 @@
+import functools
+
 import jax
 import jax.numpy as jnp
 
@@ -47,6 +49,11 @@ def squeeze(pytree, axis, result_device=None):
 def mean(pytree, result_device=None):
     mean_op = _select_op(pytree, result_device, np.mean, jnp.mean)
     return jax.tree_map(lambda t: mean_op(t), pytree)
+
+
+def array_mean(pytrees, result_device=None):
+    add_op = _select_op(pytrees, result_device, np.add, jnp.add)
+    return jax.tree_map(lambda *t: functools.reduce(add_op, t) / len(t), *pytrees)
 
 
 def get_axis_dim(pytree, axis):

@@ -51,7 +51,8 @@ def main(args):
     env = env_factory()
     replay_buffer = ClusteringReplayBuffer(
         cluster_buffer_size=config['train_config']['replay_buffer_size'] // 2, num_clusters=2,
-        clustering_fn=lambda t: 1 if np.sum(t['rewards']) > 0.5 else 0,  # Uniform over good and bad trajectories
+        # Uniform over good and bad trajectories
+        clustering_fn=lambda t: 1 if np.sum(t['rewards']) >= config['train_config']['good_trajectory_reward_threshold'] else 0,
     )
     agent = NethackMuZeroAgent(
         replay_buffer=replay_buffer,
