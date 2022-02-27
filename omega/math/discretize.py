@@ -6,7 +6,7 @@ import jax.numpy as jnp
 def round_to_closest_canonic_value(values, canonic_values):
     chex.assert_rank(canonic_values, 1)
 
-    values = jnp.expand_dims(values, 1)
+    values = jnp.expand_dims(values, axis=-1)
     values_keys_diff = jnp.abs(values - canonic_values)
     best_canonic_value_indices = jnp.argmin(values_keys_diff, axis=-1)
 
