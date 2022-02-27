@@ -4,6 +4,9 @@ import jax.numpy as jnp
 
 
 def round_to_closest_canonic_value(values, canonic_values):
+    """
+    Round each value to the closest canonic value.
+    """
     chex.assert_rank(canonic_values, 1)
 
     values = jnp.expand_dims(values, axis=-1)
@@ -14,6 +17,10 @@ def round_to_closest_canonic_value(values, canonic_values):
 
 
 def discretize(values, lookup):
+    """
+    Given a tensor of values and a lookup table, returns a tensor of lookup table values corresponding to
+    lookup keys closest to original values.
+    """
     chex.assert_type(values, jnp.float32)
 
     values = round_to_closest_canonic_value(values, jnp.array(list(lookup.keys())))
@@ -26,10 +33,17 @@ def discretize(values, lookup):
 
 
 def discretize_onehot(values, lookup):
+    """
+    Given a tensor of values and a lookup table, returns a tensor of lookup table values corresponding to
+    lookup keys closest to original values in one-hot representation.
+    """
     return onehot(discretize(values, lookup), num_values=len(lookup))
 
 
 def undiscretize_expected(logits, lookup):
+    """
+    Given a probability distribution over lookup values, returns the expected value of the corresponding lookup keys.
+    """
     probs = jax.nn.softmax(logits, axis=-1)
     result = jnp.zeros(shape=logits.shape[:-1], dtype=jnp.float32)
     for k, v in lookup.items():
@@ -38,4 +52,8 @@ def undiscretize_expected(logits, lookup):
 
 
 def onehot(values, num_values):
+    """
+    Converts the given tensor to one-hot representation.
+    """
+    chex.assert_type(values, jnp.int32)
     return jnp.eye(num_values)[values]

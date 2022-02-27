@@ -147,7 +147,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         return selected_actions, metadata
 
     def _train_on_minibatch(self, train_state, rnd_train_state, trajectory_minibatch, rng):
-        subkey1, subkey2 = jax.random.split(rng)
+        grad_key, rnd_grad_key = jax.random.split(rng)
 
         def loss_function(params, train_state, trajectory_minibatch, rng):
             log_action_probs, log_id_action_probs, state_values = train_state.apply_fn(
@@ -186,7 +186,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
 
         grad_and_stats_func = jax.grad(loss_function, argnums=0, has_aux=True)
         grads, stats = grad_and_stats_func(
-            train_state.params, train_state, trajectory_minibatch, subkey1)
+            train_state.params, train_state, trajectory_minibatch, grad_key)
         if self._config['gradient_clipnorm'] is not None:
             grads = clip_gradient_by_norm(grads, self._config['gradient_clipnorm'])
         train_state = train_state.apply_gradients(grads=grads)
@@ -202,21 +202,21 @@ class NethackPPOAgent(JaxTrainableAgentBase):
 
             rnd_grad_and_stats = jax.grad(rnd_loss_function, argnums=0, has_aux=True)
             rnd_grads, rnd_stats = rnd_grad_and_stats(
-                rnd_train_state.params, rnd_train_state, trajectory_minibatch, subkey2)
+                rnd_train_state.params, rnd_train_state, trajectory_minibatch, rnd_grad_key)
             rnd_train_state = rnd_train_state.apply_gradients(grads=rnd_grads)
             stats = pytree.update(stats, rnd_stats)
 
         return train_state, rnd_train_state, stats
 
     def _sample_minibatch(self, trajectory_batch, rng):
-        key1, key2 = jax.random.split(rng)
+        trajectory_key, timestamp_key = jax.random.split(rng)
 
         minibatch_size = self._config['minibatch_size']
         num_trajectories = pytree.get_axis_dim(trajectory_batch, axis=0)
         num_timestamps = pytree.get_axis_dim(trajectory_batch, axis=1)
 
-        trajectory_indices = jax.random.randint(key1, (minibatch_size,), 0, num_trajectories)
-        timestamp_indices = jax.random.randint(key2, (minibatch_size,), 0, num_timestamps)
+        trajectory_indices = jax.random.randint(trajectory_key, (minibatch_size,), 0, num_trajectories)
+        timestamp_indices = jax.random.randint(timestamp_key, (minibatch_size,), 0, num_timestamps)
 
         # Note that we replace trajectory and timestamp dimensions by minibatch dimension here
         return jax.tree_map(
@@ -282,10 +282,10 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         def train_step_on_minibatch_body(carry, nothing):
             rng, train_state, rnd_train_state = carry
 
-            rng, subkey1, subkey2 = jax.random.split(rng, 3)
-            trajectory_minibatch = self._sample_minibatch(trajectory_batch, subkey1)
+            rng, sample_key, train_key = jax.random.split(rng, 3)
+            trajectory_minibatch = self._sample_minibatch(trajectory_batch, sample_key)
             train_state, rnd_train_state, train_stats = self._train_on_minibatch(
-                train_state, rnd_train_state, trajectory_minibatch, subkey2)
+                train_state, rnd_train_state, trajectory_minibatch, train_key)
 
             return (rng, train_state, rnd_train_state), train_stats
 

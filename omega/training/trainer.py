@@ -24,7 +24,9 @@ class Trainer(abc.ABC):
         return self._num_collection_steps
 
     def run_training_step(self, agent, stats=None):
+        # Collect some trajectories by interacting with the environment. We call it "day" stage.
         trajectory_batch = self._run_day(agent, stats)
+        # Update the parameters of the agent. We call it "night" stage.
         self._run_night(agent, stats, trajectory_batch)
 
     def _run_day(self, agent, stats):

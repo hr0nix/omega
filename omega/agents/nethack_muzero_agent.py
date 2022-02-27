@@ -3,14 +3,11 @@ import functools
 from functools import partial
 from typing import Callable
 
-import random
 from absl import logging
 
-import chex
 import flax.struct
 import flax.training.train_state
 import flax.training.checkpoints
-import numpy as np
 import jax.numpy as jnp
 import jax.random
 import jax.tree_util
@@ -155,7 +152,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
-        # TODO: using deterministic predictions in MCTS seems to perform worse
+        # TODO: for some reason using deterministic predictions in MCTS seems to perform worse. Ensembilng?
         representation_fn = functools.partial(train_state.representation_fn, deterministic=False)
         represent_observation_trajectory_batch = jax.vmap(representation_fn, in_axes=(None, 0, 0))
         represenation_key_batch = jax.random.split(representation_key, batch_size)
@@ -224,7 +221,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 trajectory_latent_states = train_state.representation_fn(
                     params, trajectory['current_state'], deterministic=False, rng=representation_key)
-                # Unrolls in the end of trajectory will not have next state targets
                 trajectory_latent_states_padded = jnp.concatenate(
                     [
                         trajectory_latent_states,
@@ -281,14 +277,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     step_state_similarity_loss = jnp.mean(rlax.l2_loss(current_latent_states, state_targets))
                     # We don't have targets in the end of trajectory
                     state_similarity_loss_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
-                    # We also don't have targets after terminal states
+                    # We also don't have next state targets after terminal states
                     state_similarity_loss_mask *= 1.0 - trajectory_done_padded[unroll_step:unroll_step + num_timestamps]
                     state_similarity_loss += (
                         jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
                         (jnp.sum(state_similarity_loss_mask) + 1e-10)  # Just in case
                     )
 
-                # Also make loss independent of num_unroll_steps
+                # Make loss independent of num_unroll_steps
                 value_loss /= num_unroll_steps
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
@@ -363,8 +359,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             num_unroll_steps = self._config['num_train_unroll_steps']
             num_actions = self.action_space.n
 
-            # The original MuZero paper used n-step returns, but we'll go completely off-policy
-            # MuZero Reanalyze paper has shown that it works (but a bit worse for some reason)
+            # The original MuZero paper used n-step returns, but we'll go completely off-policy.
+            # MuZero Reanalyze paper has shown that it works, but a bit worse for some reason. Works fine for us.
             state_values = trajectory['metadata']['mcts_state_values']
 
             # Allocate memory for training targets

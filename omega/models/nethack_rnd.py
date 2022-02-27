@@ -27,8 +27,8 @@ class NethackRNDNetwork(nn.Module):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         # Encode state
-        rng, subkey = jax.random.split(rng, 2)
-        memory = self._state_encoder(current_state_batch, deterministic=deterministic, rng=rng)
+        rng, state_encoder_key = jax.random.split(rng, 2)
+        memory = self._state_encoder(current_state_batch, deterministic=deterministic, rng=state_encoder_key)
 
         # Summarize encoded state in a compact vector
         memory = jnp.reshape(memory, newshape=[memory.shape[0], -1])
@@ -54,10 +54,12 @@ class NethackRNDNetworkPair(nn.Module):
     def __call__(self, current_state_batch, rng, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        subkey1, subkey2 = jax.random.split(rng)
-        random_state = self._random_network(current_state_batch, rng=subkey1, deterministic=deterministic)
+        random_network_key, predictor_network_key = jax.random.split(rng)
+        random_state = self._random_network(
+            current_state_batch, rng=random_network_key, deterministic=deterministic)
         random_state = jax.lax.stop_gradient(random_state)  # Don't train the random network
-        predicted_state = self._predictor_network(current_state_batch, rng=subkey2, deterministic=deterministic)
+        predicted_state = self._predictor_network(
+            current_state_batch, rng=predictor_network_key, deterministic=deterministic)
 
         loss = 0.5 * (predicted_state - random_state) ** 2
         loss_per_example = jnp.mean(loss, axis=1)

@@ -4,6 +4,9 @@ import chex
 
 
 def entropy(logits):
+    """
+    Computes the entropy of a given probability distribution, correctly handling zero probabilities.
+    """
     chex.assert_rank(logits, 1)
 
     log_probs = jax.nn.log_softmax(logits)

@@ -155,10 +155,10 @@ class PerceiverNethackStateEncoder(nn.Module):
 
         # Perceiver body
         for block_idx in range(self.num_perceiver_blocks):
-            rng, subkey1, subkey2 = jax.random.split(rng, 3)
+            rng, map_attention_key, memory_update_key = jax.random.split(rng, 3)
             memory = self._map_attention_blocks[block_idx](
-                memory, glyphs_embeddings, deterministic=deterministic, rng=subkey1)
+                memory, glyphs_embeddings, deterministic=deterministic, rng=map_attention_key)
             memory = self._memory_update_blocks[block_idx](
-                memory, deterministic=deterministic, rng=subkey2)
+                memory, deterministic=deterministic, rng=memory_update_key)
 
         return memory

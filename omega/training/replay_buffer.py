@@ -1,9 +1,7 @@
 import abc
 from collections import deque
-from functools import partial
 
 import numpy as np
-import jax
 
 from ..utils import pytree
 from ..utils.profiling import timeit
