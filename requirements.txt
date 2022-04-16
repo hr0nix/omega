@@ -1,6 +1,6 @@
 numpy~=1.19.5
 flax~=0.3.4
-jax[cuda]~=0.2.17
+jax[cuda]==0.2.25
 optax~=0.0.9
 rlax~=0.0.4
 attrs~=21.2.0
