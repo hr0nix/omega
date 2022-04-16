@@ -11,8 +11,11 @@ RUN apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main'
 RUN apt-get update && apt-get --allow-unauthenticated install -y \
     cmake kitware-archive-keyring
 
-WORKDIR /omega
-COPY ./requirements.txt /omega
+RUN useradd -ms /bin/bash bob
+USER bob
+WORKDIR /home/bob/omega
+
+COPY ./requirements.txt /home/bob/omega
 
 RUN python3.8 -m pip install --upgrade pip setuptools wheel
-RUN python3.8 -m pip install -r /omega/requirements.txt --use-deprecated=html5lib --find-links https://storage.googleapis.com/jax-releases/jax_releases.html
+RUN python3.8 -m pip install -r /home/bob/omega/requirements.txt --use-deprecated=html5lib --find-links https://storage.googleapis.com/jax-releases/jax_releases.html

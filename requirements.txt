@@ -13,3 +13,4 @@ PyYAML~=5.4.1
 tqdm~=4.62.0
 ray~=1.8.0
 pytest~=7.0.1
+wandb~=0.12.14
