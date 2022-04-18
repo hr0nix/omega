@@ -4,11 +4,13 @@ import os
 import subprocess
 
 from absl import logging
+logging.set_verbosity(logging.INFO)
 
 
 CONFIG_FILENAME = 'config.yaml'
 CHECKPOINTS_DIR = 'checkpoints'
 EPISODES_DIR = 'episodes'
+WANDB_ID_FILE = 'wandb_id'
 
 
 def make_experiment(args):
@@ -22,6 +24,8 @@ def make_experiment(args):
     os.makedirs(args.output_dir, exist_ok=False)
     shutil.copy(args.config, os.path.join(args.output_dir, CONFIG_FILENAME))
 
+    logging.info(f'A new experiment created at {args.output_dir}')
+
 
 def run_experiment(args):
     if not os.path.exists(args.dir):
@@ -30,12 +34,13 @@ def run_experiment(args):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
     env['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
-    subprocess.run(env=env, capture_output=True, args=[
+    subprocess.run(env=env, args=[
         'python3.8',
         os.path.join(cur_dir, 'train_agent.py'),
         '--config', os.path.join(args.dir, CONFIG_FILENAME),
         '--checkpoints', os.path.join(args.dir, CHECKPOINTS_DIR),
         '--episodes', os.path.join(args.dir, EPISODES_DIR),
+        '--wandb-id-file', os.path.join(args.dir, WANDB_ID_FILE),
     ])
 
 
@@ -55,6 +60,12 @@ def cleanup_experiment(args):
     else:
         logging.info(f'No episodes at {episodes_dir}')
 
+    wandb_id_file = os.path.join(args.dir, WANDB_ID_FILE)
+    if os.path.exists(wandb_id_file):
+        shutil.rmtree(wandb_id_file)
+    else:
+        logging.info(f'No wandb id file at {wandb_id_file}')
+
     logging.info(f'Experiment at {args.dir} cleaned up!')
 
 
@@ -63,7 +74,7 @@ def play_episode(args):
         raise RuntimeError(f'Episode file {args.file} not found')
 
     import nle
-    nle_path = nle.__path__
+    nle_path = nle.__path__[0]
     subprocess.run(args=[
         'python3.8',
         os.path.join(nle_path, 'scripts', 'ttyplay2.py'),

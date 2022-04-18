@@ -16,6 +16,7 @@ from omega.training import OnPolicyTrainer, ClusteringReplayBuffer
 from omega.evaluation import EvaluationStats
 from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
+from omega.utils.wandb import get_wandb_id
 
 
 def make_env(train_config, episodes_dir):
@@ -45,7 +46,8 @@ def main(args):
     train_config = config['train_config']
 
     ray.init(num_cpus=train_config['num_workers'])
-    wandb.init(project='omega', config=config, resume='allow')
+    if args.wandb_id_file is not None:
+        wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
 
     env_factory = lambda: make_env(train_config, episodes_dir=args.episodes)
     env = env_factory()
@@ -75,7 +77,8 @@ def main(args):
         trainer.run_training_step(agent, stats)
 
         if (day + 1) % train_config['epoch_every_num_days'] == 0:
-            wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day)
+            if args.wandb_id_file is not None:
+                wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day)
             stats.print_summary(title='After {} days:'.format(day + 1))
             if args.checkpoints is not None:
                 agent.save_to_checkpoint(args.checkpoints, day)
@@ -86,6 +89,7 @@ def parse_args():
     parser.add_argument('--config', metavar='FILE', required=True)
     parser.add_argument('--checkpoints', metavar='DIR', required=False)
     parser.add_argument('--episodes', metavar='DIR', required=False)
+    parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
     return parser.parse_args()
 
 
