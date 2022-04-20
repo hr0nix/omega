@@ -40,8 +40,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_weight': 1.0,
         'reward_loss_weight': 1.0,
         'state_similarity_loss_weight': 1.0,
-        # TODO: we need an assert somewhere that there are no rewards outside of this
-        'reward_values': [-0.01, 0.0, 1.0],
+        'act_deterministic': False,
+        'reanalyze_deterministic': False,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -147,13 +147,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def act_on_batch(self, observation_batch):
         return self._act_on_batch_jit(observation_batch, self._train_state, self.next_random_key())
 
-    def _compute_mcts_statistics(self, observation_trajectory_batch, train_state, rng):
+    def _compute_mcts_statistics(self, observation_trajectory_batch, train_state, deterministic, rng):
         representation_key, mcts_key = jax.random.split(rng)
 
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
-        # TODO: for some reason using deterministic predictions in MCTS seems to perform worse. Ensembilng?
-        representation_fn = functools.partial(train_state.representation_fn, deterministic=False)
+        representation_fn = functools.partial(train_state.representation_fn, deterministic=deterministic)
         represent_observation_trajectory_batch = jax.vmap(representation_fn, in_axes=(None, 0, 0))
         represenation_key_batch = jax.random.split(representation_key, batch_size)
         latent_state_trajectory_batch = represent_observation_trajectory_batch(
@@ -168,8 +167,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         mcts_func = functools.partial(
             mcts,
             num_actions=self.action_space.n,
-            prediction_fn=jax.tree_util.Partial(train_state.prediction_fn, train_state.params, deterministic=False),
-            dynamics_fn=jax.tree_util.Partial(dynamics_fn, train_state.params, deterministic=False),
+            prediction_fn=jax.tree_util.Partial(
+                train_state.prediction_fn, train_state.params, deterministic=deterministic),
+            dynamics_fn=jax.tree_util.Partial(
+                dynamics_fn, train_state.params, deterministic=deterministic),
             discount_factor=self._config['discount_factor'],
             num_simulations=self._config['num_mcts_simulations'],
             puct_c1=self._config['mcts_puct_c1'],
@@ -192,7 +193,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1)
 
         mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
-            observation_trajectory_batch, train_state, mcts_stats_key)
+            observation_trajectory_batch, train_state, self._config['act_deterministic'], mcts_stats_key)
 
         # Get rid of fake timestamp dimension
         mcts_policy_log_probs = pytree.squeeze(mcts_policy_log_probs, axis=1)
@@ -336,7 +337,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def _reanalyze(self, train_state, trajectory_batch, rng):
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
         mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
-            trajectory_batch['current_state'], train_state, rng)
+            trajectory_batch['current_state'], train_state, self._config['reanalyze_deterministic'], rng)
         trajectory_batch = pytree.update(trajectory_batch, {
             'metadata': {
                 'log_mcts_action_probs': mcts_policy_log_probs,
