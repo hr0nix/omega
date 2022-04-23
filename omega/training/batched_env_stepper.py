@@ -14,9 +14,7 @@ class Worker(object):
 
     def get_current_state(self):
         current_states = [env.current_state for env in self._envs]
-        return {
-            'current_state': pytree.stack(current_states, axis=0),
-        }
+        return pytree.stack(current_states, axis=0)
 
     def step(self, action_batch):
         reward_per_env = []
@@ -64,7 +62,8 @@ class BatchedEnvStepper(object):
         worker_result_promises = []
         for worker_index in range(len(self._workers)):
             worker_result_promise = self._workers[worker_index].step.remote(
-                action_batch[prev_index:prev_index + self._num_envs_per_worker[worker_index]])
+                action_batch[prev_index:prev_index + self._num_envs_per_worker[worker_index]],
+            )
             worker_result_promises.append(worker_result_promise)
             prev_index += self._num_envs_per_worker[worker_index]
         worker_results = ray.get(worker_result_promises)

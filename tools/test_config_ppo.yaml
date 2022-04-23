@@ -1,0 +1,36 @@
+train_config:
+  num_days: 3
+  epoch_every_num_days: 1
+  num_collection_steps: 4
+  num_envs: 2
+  num_workers: 2
+  env_name: 'MiniHack-Room-Random-5x5-v0'
+  use_dense_staircase_reward: false
+  observation_keys: ['glyphs']
+agent_config:
+  value_function_loss_weight: 1.0
+  entropy_regularizer_weight: 0.01
+  inverse_dynamics_loss_weight: 1.0
+  lr: 0.001
+  discount_factor: 0.999
+  gae_lambda: 0.95
+  normalize_advantage: true
+  gradient_clipnorm: 40
+  minibatch_size: 2
+  num_minibatches_per_train_step: 2
+  ppo_eps: 0.25
+  model_config:
+    state_encoder_config:
+      use_fixed_positional_embeddings: false
+      use_bl_stats: false
+      glyph_crop_area: [5, 5]
+  use_rnd: true
+  rnd_lr: 0.001
+  exploration_reward_scale: 1.0
+  rnd_model_config:
+    rnd_network_config:
+      state_encoder_config:
+        glyph_crop_area: [ 5, 5 ]
+        transformer_dropout: 0.0
+        use_bl_stats: false
+      output_dim: 16

@@ -298,7 +298,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         aggregated_train_stats = self._aggregate_train_stats(train_stats_per_minibatch, trajectory_batch)
         return train_state, rnd_train_state, aggregated_train_stats
 
-    def act_on_batch(self, observation_batch):
+    def act_on_batch(self, observation_batch, memory):
         return self._act_on_batch_jitted(
             self._train_state, self._rnd_train_state, observation_batch, self.next_random_key())
 

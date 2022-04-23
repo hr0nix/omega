@@ -15,5 +15,11 @@ class Agent(abc.ABC):
         return self._action_space
 
     @abc.abstractmethod
-    def act_on_batch(self, observation_batch):
+    def act_on_batch(self, observation_batch, memory):
         pass
+
+    def init_memory_batch(self, batch_size):
+        return {}
+
+    def update_memory_batch(self, prev_memory, metadata, action, done):
+        return prev_memory
