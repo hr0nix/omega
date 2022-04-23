@@ -120,7 +120,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         # Fuse prev action embedding with prev memory
         prev_action_embedding = self._action_embedder(prev_action)
         prev_action_embedding = jnp.expand_dims(prev_action_embedding, axis=-2)
-        prev_memory_with_action = prev_memory + prev_action_embedding
+        prev_memory_with_action = jnp.concatenate([prev_memory, prev_action_embedding], axis=-2)
 
         # Attend from latent observation to prev memory
         representation = self._memory_aggregator(

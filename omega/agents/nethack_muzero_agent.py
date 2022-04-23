@@ -227,8 +227,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return latent_state_trajectory, updated_memory_trajectory
 
-    def _compute_mcts_statistics(
-            self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
     def _add_to_replay_buffer(self, trajectory_batch):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
         trajectory_batch = pytree.to_cpu(trajectory_batch)
@@ -248,7 +246,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         for i in range(len(replayed_trajectories)):
             self._replay_buffer.update_priority(replayed_trajectories[i], priorities[i])
 
-    def _compute_mcts_statistics(self, observation_trajectory_batch, train_state, deterministic, rng):
+    def _compute_mcts_statistics(
+            self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
         representation_key, mcts_key = jax.random.split(rng)
 
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]

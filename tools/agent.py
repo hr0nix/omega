@@ -49,6 +49,7 @@ def train_agent(args):
         observation_space=env.observation_space,
         action_space=env.action_space, config=config['agent_config'])
     trainer = OnPolicyTrainer(
+        agent=agent,
         env_factory=env_factory,
         num_workers=train_config['num_workers'],
         num_envs=train_config['num_envs'],
@@ -62,7 +63,7 @@ def train_agent(args):
 
     stats = EvaluationStats()
     for day in tqdm.tqdm(range(start_day, train_config['num_days'])):
-        trainer.run_training_step(agent, stats)
+        trainer.run_training_step(stats)
 
         if (day + 1) % train_config['epoch_every_num_days'] == 0:
             if args.wandb_id_file is not None:
