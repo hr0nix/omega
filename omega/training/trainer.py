@@ -72,6 +72,11 @@ class Trainer(abc.ABC):
         pass
 
 
+class DummyTrainer(Trainer):
+    def _run_night(self, agent, stats, collected_trajectories):
+        pass
+
+
 class OnPolicyTrainer(Trainer):
     def _run_night(self, agent, stats, collected_trajectories):
         training_stats = agent.train_on_batch(collected_trajectories)

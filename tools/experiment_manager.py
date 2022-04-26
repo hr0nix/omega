@@ -35,8 +35,7 @@ def run_experiment(args):
     env = os.environ.copy()
     env['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     subprocess.run(env=env, args=[
-        'python3.8',
-        os.path.join(cur_dir, 'train_agent.py'),
+        'python3.8', os.path.join(cur_dir, 'agent.py'), 'train',
         '--config', os.path.join(args.dir, CONFIG_FILENAME),
         '--checkpoints', os.path.join(args.dir, CHECKPOINTS_DIR),
         '--episodes', os.path.join(args.dir, EPISODES_DIR),

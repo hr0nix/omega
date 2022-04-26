@@ -12,7 +12,7 @@ from absl import logging
 logging.set_verbosity(logging.INFO)
 
 from omega.agents import NethackMuZeroAgent
-from omega.training import OnPolicyTrainer, ClusteringReplayBuffer
+from omega.training import OnPolicyTrainer, DummyTrainer, ClusteringReplayBuffer
 from omega.evaluation import EvaluationStats
 from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
@@ -41,7 +41,7 @@ def load_config(filename):
         return yaml.safe_load(f)
 
 
-def main(args):
+def train_agent(args):
     config = load_config(args.config)
     train_config = config['train_config']
 
@@ -84,16 +84,58 @@ def main(args):
                 agent.save_to_checkpoint(args.checkpoints, day)
 
 
+def eval_agent(args):
+    config = load_config(args.train_config)
+    ray.init(num_cpus=args.num_parallel_envs)
+
+    env_factory = lambda: make_env(config['train_config'], episodes_dir=args.episodes)
+    env = env_factory()
+    agent = NethackMuZeroAgent(
+        replay_buffer=None,
+        observation_space=env.observation_space,
+        action_space=env.action_space, config=config['agent_config'])
+    trainer = DummyTrainer(
+        env_factory=env_factory,
+        num_workers=args.num_workers,
+        num_envs=args.num_parallel_envs,
+        num_collection_steps=1,
+    )
+
+    start_day = agent.try_load_from_checkpoint(args.checkpoints)
+    if start_day == 0:
+        raise RuntimeError('Looks like no checkpoint has been found')
+
+    stats = EvaluationStats()
+    for _ in tqdm.tqdm(range(args.num_steps)):
+        trainer.run_training_step(agent, stats)
+
+    stats.print_summary(title='Stats after taking {} steps:'.format(args.num_steps))
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', metavar='FILE', required=True)
-    parser.add_argument('--checkpoints', metavar='DIR', required=False)
-    parser.add_argument('--episodes', metavar='DIR', required=False)
-    parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
+    subparsers = parser.add_subparsers(required=True, dest='mode', help='Available modes:')
+
+    train_parser = subparsers.add_parser('make', help='Train an agent')
+    train_parser.add_argument('--config', metavar='FILE', required=True)
+    train_parser.add_argument('--checkpoints', metavar='DIR', required=False)
+    train_parser.add_argument('--episodes', metavar='DIR', required=False)
+    train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
+    train_parser.set_defaults(func=train_agent)
+
+    eval_parser = subparsers.add_parser('eval', help='Eval an agent')
+    eval_parser.add_argument('--train-config', metavar='FILE', required=True)
+    eval_parser.add_argument('--checkpoints', metavar='DIR', required=True)
+    eval_parser.add_argument('--episodes', metavar='DIR', required=False)
+    eval_parser.add_argument('--num-steps', metavar='NUM', type=int, default=500, required=False)
+    eval_parser.add_argument('--num-workers', metavar='NUM', type=int, default=2, required=False)
+    eval_parser.add_argument('--num-parallel-envs', metavar='NUM', type=int, default=32, required=False)
+    eval_parser.set_defaults(func=eval_agent)
+
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
     with disable_jit_if_no_gpu():
-        main(args)
+        args.func(args)
