@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random
 import chex
 
-from omega.neural import TransformerNet
+from omega.neural import CrossTransformerNet
 
 from ..utils import pytree
 from .nethack_state_encoder import PerceiverNethackStateEncoder
@@ -55,7 +55,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         self._action_embedder = nn.Embed(
             num_embeddings=self.num_actions, features=self._state_encoder.memory_dim,
             name='action_embedder')
-        self._dynamics_transformer = TransformerNet(
+        self._dynamics_transformer = CrossTransformerNet(
             dim=self._state_encoder.memory_dim,
             **self.dynamics_transformer_config,
             name='dynamics_transformer')
@@ -106,10 +106,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         action_embedding = self._action_embedder(action)
         action_embedding = jnp.expand_dims(action_embedding, axis=-2)
-        previous_latent_state_with_action = action_embedding + previous_latent_state
+        previous_latent_state_with_action = jnp.concatenate([action_embedding, previous_latent_state], axis=-2)
 
         next_latent_state = self._dynamics_transformer(
-            previous_latent_state_with_action, deterministic=deterministic, rng=dynamics_function_key)
+            previous_latent_state, previous_latent_state_with_action,
+            deterministic=deterministic, rng=dynamics_function_key)
 
         log_reward_probs = self._reward_predictor(
             previous_latent_state_with_action, deterministic=deterministic, rng=reward_predictor_key)
