@@ -6,10 +6,14 @@ train_config:
   num_envs: 32
   env_name: 'MiniHack-Room-Random-15x15-v0'
   observation_keys: ['glyphs']
-  use_dense_staircase_reward: false
-  replay_buffer_size: 100000
-  good_trajectory_reward_threshold: 0.5
+  replay_buffer:
+    type: uniform_over_good_and_bad
+    cluster_buffer:
+      type: uniform
+      buffer_size: 50000
+    good_total_reward_threshold: 0.5
 agent_config:
+  use_priorities: false
   lr: 0.001
   discount_factor: 0.95
   value_estimation_lambda: 0.5

@@ -3,6 +3,7 @@ from collections import deque
 
 import numpy as np
 
+from ..utils.collections import LinearPrioritizedSampler, IdentityHashWrapper, get_dict_slice
 from ..utils import pytree
 from ..utils.profiling import timeit
 
@@ -10,7 +11,7 @@ from ..utils.profiling import timeit
 # TODO: ideally you'd want to save replay buffer state so that loading from checkpoint restores state fully
 class ReplayBuffer(abc.ABC):
     @abc.abstractmethod
-    def add_trajectory_batch(self, trajectory_batch):
+    def add_trajectory(self, trajectory, priority=None):
         pass
 
     @abc.abstractmethod
@@ -26,6 +27,9 @@ class ReplayBuffer(abc.ABC):
     def empty(self):
         return self.size == 0
 
+    def update_priority(self, trajectory, priority):
+        raise NotImplementedError('This replay buffer type does not support priorities')
+
     def get_stats(self):
         return {}
 
@@ -34,18 +38,17 @@ class FIFOReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size):
         self._buffer = deque(maxlen=buffer_size)
 
-    def add_trajectory_batch(self, trajectory_batch):
-        trajectory_batch = pytree.to_cpu(trajectory_batch)  # Avoid wasting GPU memory for replay buffer
-        batch_size = pytree.get_axis_dim(trajectory_batch, axis=0)
-        for trajectory_idx in range(batch_size):
-            trajectory = pytree.slice_from_batch(trajectory_batch, trajectory_idx)
-            assert pytree.is_cpu(trajectory)
-            self._buffer.append(trajectory)
+    def add_trajectory(self, trajectory, priority=None):
+        if priority is not None:
+            raise ValueError('Priorities are not supported with this replay buffer type')
+
+        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        self._buffer.append(trajectory)
 
     def sample_trajectory_batch(self, batch_size):
         random_indices = np.random.randint(low=0, high=len(self._buffer), size=batch_size)
         random_trajectories = [self._buffer[i] for i in random_indices]
-        return pytree.stack(random_trajectories, axis=0)
+        return random_trajectories
 
     @property
     def size(self):
@@ -57,21 +60,93 @@ class FIFOReplayBuffer(ReplayBuffer):
         }
 
 
+class PrioritizedReplayBuffer(ReplayBuffer):
+    def __init__(self, buffer_size, alpha=1.0, epsilon=1e-3, good_total_reward_threshold=0.5):
+        self._max_size = buffer_size
+        self._good_total_reward_threshold = good_total_reward_threshold
+
+        self._buffer = deque(maxlen=buffer_size)
+        self._sampler = LinearPrioritizedSampler(max_items=buffer_size, alpha=alpha, epsilon=epsilon)
+
+        self._last_batch_good_trajectory_fraction = 0
+        self._last_batch_avg_priority = 0.0
+        self._num_good_trajectories_in_buffer = 0
+
+    def add_trajectory(self, trajectory, priority=None):
+        self._validate_priority(priority)
+
+        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        if len(self._buffer) == self._max_size:
+            evicted_trajectory = self._buffer.popleft()
+            self._sampler.remove(self._for_sampler(evicted_trajectory))
+            if self._is_good_trajectory(evicted_trajectory):
+                self._num_good_trajectories_in_buffer -= 1
+        self._buffer.append(trajectory)
+        self._sampler.add(self._for_sampler(trajectory), priority)
+        self._num_good_trajectories_in_buffer += self._is_good_trajectory(trajectory)
+
+    def sample_trajectory_batch(self, batch_size):
+        sampled_trajectories = [wrapper.val for wrapper in self._sampler.sample(num_items=batch_size)]
+        self._update_stats(sampled_trajectories)
+        return sampled_trajectories
+
+    def update_priority(self, trajectory, priority):
+        self._validate_priority(priority)
+        self._sampler.update_priority(self._for_sampler(trajectory), priority)
+
+    @staticmethod
+    def _validate_priority(priority):
+        if priority is None:
+            raise ValueError('Priority must be specified')
+        if priority < 0:
+            raise ValueError('Priority must be non-negative')
+
+    @staticmethod
+    def _for_sampler(trajectory):
+        # Sampler requires hashable item types, and trajectories are pytrees (dicts).
+        # To work around this, we use a wrapper with value identity based hashing.
+        return IdentityHashWrapper(trajectory)
+
+    def _is_good_trajectory(self, trajectory):
+        return np.sum(trajectory['rewards']) >= self._good_total_reward_threshold
+
+    def _update_stats(self, sampled_trajectories):
+        self._last_batch_avg_priority = 0.0
+        self._last_batch_good_trajectory_fraction = 0.0
+
+        for trajectory in sampled_trajectories:
+            self._last_batch_good_trajectory_fraction += self._is_good_trajectory(trajectory)
+            self._last_batch_avg_priority += self._sampler.get_priority(self._for_sampler(trajectory))
+
+        batch_size = len(sampled_trajectories)
+        self._last_batch_avg_priority /= batch_size
+        self._last_batch_good_trajectory_fraction /= batch_size
+
+    @property
+    def size(self):
+        return len(self._buffer)
+
+    def get_stats(self):
+        return {
+            'replay_buffer_size': len(self._buffer),
+            'last_batch_avg_priority': self._last_batch_avg_priority,
+            'last_batch_good_trajectory_fraction': self._last_batch_good_trajectory_fraction,
+            'num_good_trajectories_in_buffer': self._num_good_trajectories_in_buffer,
+        }
+
+
 class ClusteringReplayBuffer(ReplayBuffer):
-    def __init__(self, cluster_buffer_size, num_clusters, clustering_fn):
-        self._buffers = [FIFOReplayBuffer(cluster_buffer_size) for _ in range(num_clusters)]
+    def __init__(self, cluster_buffer_fn, num_clusters, clustering_fn):
+        self._buffers = [cluster_buffer_fn() for _ in range(num_clusters)]
         self._clustering_fn = clustering_fn
 
-    def add_trajectory_batch(self, trajectory_batch):
-        trajectory_batch = pytree.to_cpu(trajectory_batch)  # Avoid wasting GPU memory for replay buffer
-        batch_size = pytree.get_axis_dim(trajectory_batch, axis=0)
-        for trajectory_idx in range(batch_size):
-            trajectory = pytree.slice_from_batch(trajectory_batch, trajectory_idx)
-            cluster_id = self._clustering_fn(trajectory)
-            assert 0 <= cluster_id < len(self._buffers)
-            trajectory_as_batch = pytree.expand_dims(trajectory, axis=0)
-            assert pytree.is_cpu(trajectory_as_batch)  # Make sure we didn't copy back to GPU by mistake
-            self._buffers[cluster_id].add_trajectory_batch(trajectory_as_batch)
+    def add_trajectory(self, trajectory, priority=None):
+        cluster_id = self._get_trajectory_cluster(trajectory)
+        self._buffers[cluster_id].add_trajectory(trajectory, priority)
+
+    def update_priority(self, trajectory, priority):
+        cluster_id = self._get_trajectory_cluster(trajectory)
+        self._buffers[cluster_id].update_priority(trajectory, priority)
 
     def sample_trajectory_batch(self, batch_size):
         num_clusters = len(self._buffers)
@@ -89,11 +164,19 @@ class ClusteringReplayBuffer(ReplayBuffer):
         ]
         assert sum(num_samples_from_cluster) == batch_size
 
-        batches_per_cluster = [
-            self._buffers[cluster_id].sample_trajectory_batch(num_samples_from_cluster[active_cluster_idx])
+        random_trajectories = [
+            trajectory
             for active_cluster_idx, cluster_id in enumerate(active_clusters)
+            for trajectory in self._buffers[cluster_id].sample_trajectory_batch(
+                num_samples_from_cluster[active_cluster_idx])
         ]
-        return pytree.concatenate(batches_per_cluster, axis=0)
+        return random_trajectories
+
+    def _get_trajectory_cluster(self, trajectory):
+        cluster_id = self._clustering_fn(trajectory)
+        if cluster_id < 0 or cluster_id >= len(self._buffers):
+            raise RuntimeError(f'An unexpected replay buffer cluster index: {cluster_id}')
+        return cluster_id
 
     @property
     def size(self):
@@ -101,6 +184,32 @@ class ClusteringReplayBuffer(ReplayBuffer):
 
     def get_stats(self):
         return {
-            f'replay_buffer_size_cl_{cluster_id}': self._buffers[cluster_id].size
+            f'{key}/cluster_{cluster_id}': value
             for cluster_id in range(len(self._buffers))
+            for key, value in self._buffers[cluster_id].get_stats().items()
         }
+
+
+def create_from_config(config):
+    buffer_type = config['type']
+
+    if buffer_type == 'uniform':
+        return FIFOReplayBuffer(buffer_size=config['buffer_size'])
+
+    elif buffer_type == 'uniform_over_good_and_bad':
+        clustering_fn = lambda t: 1 if np.sum(t['rewards']) >= config['good_total_reward_threshold'] else 0
+        cluster_fn = lambda: create_from_config(config['cluster_buffer'])
+        return ClusteringReplayBuffer(
+            cluster_fn,
+            num_clusters=2,
+            clustering_fn=clustering_fn,
+        )
+
+    elif buffer_type == 'prioritized':
+        return PrioritizedReplayBuffer(
+            buffer_size=config['buffer_size'],
+            **get_dict_slice(config, ['alpha', 'epsilon', 'good_total_reward_threshold'])
+        )
+
+    else:
+        raise ValueError(f'Unknown replay buffer type: {buffer_type}')

@@ -61,7 +61,7 @@ def cleanup_experiment(args):
 
     wandb_id_file = os.path.join(args.dir, WANDB_ID_FILE)
     if os.path.exists(wandb_id_file):
-        shutil.rmtree(wandb_id_file)
+        os.remove(wandb_id_file)
     else:
         logging.info(f'No wandb id file at {wandb_id_file}')
 
@@ -77,7 +77,7 @@ def play_episode(args):
     subprocess.run(args=[
         'python3.8',
         os.path.join(nle_path, 'scripts', 'ttyplay2.py'),
-        '-s', '1', '-a',
+        '-s', f'{args.speed:.3f}', '-a',
         '-f', args.file,
     ])
 
@@ -102,6 +102,7 @@ def parse_args():
 
     play_parser = subparsers.add_parser('play', help='Play an episode')
     play_parser.add_argument('--file', metavar='FILE', dest='file', required=True, type=str)
+    play_parser.add_argument('--speed', metavar='RATE', dest='speed', required=False, type=float, default=1.0)
     play_parser.set_defaults(func=play_episode)
 
     return parser.parse_args()
