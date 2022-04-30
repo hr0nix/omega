@@ -6,15 +6,13 @@ import gym
 import minihack
 import wandb
 
-import numpy as np
-
 from absl import logging
 logging.set_verbosity(logging.INFO)
 
 from omega.agents import NethackMuZeroAgent
-from omega.training import OnPolicyTrainer, DummyTrainer, ClusteringReplayBuffer
+from omega.training import OnPolicyTrainer, DummyTrainer
+from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
-from omega.minihack.rewards import distance_to_staircase_reward
 from omega.utils.jax import disable_jit_if_no_gpu
 from omega.utils.wandb import get_wandb_id
 
@@ -22,17 +20,10 @@ from omega.utils.wandb import get_wandb_id
 def make_env(train_config, episodes_dir):
     import omega.minihack.envs  # noqa
 
-    reward_manager = None
-    if train_config['use_dense_staircase_reward']:
-        reward_manager = minihack.RewardManager()
-        reward_manager.add_location_event('staircase', terminal_required=True)
-        reward_manager.add_custom_reward_fn(distance_to_staircase_reward)
-
     return gym.make(
         train_config['env_name'],
         observation_keys=train_config['observation_keys'],
         savedir=episodes_dir,
-        reward_manager=reward_manager,
     )
 
 
@@ -51,11 +42,7 @@ def train_agent(args):
 
     env_factory = lambda: make_env(train_config, episodes_dir=args.episodes)
     env = env_factory()
-    replay_buffer = ClusteringReplayBuffer(
-        cluster_buffer_size=config['train_config']['replay_buffer_size'] // 2, num_clusters=2,
-        # Uniform over good and bad trajectories
-        clustering_fn=lambda t: 1 if np.sum(t['rewards']) >= config['train_config']['good_trajectory_reward_threshold'] else 0,
-    )
+    replay_buffer = create_replay_buffer_from_config(config['train_config']['replay_buffer'])
     agent = NethackMuZeroAgent(
         replay_buffer=replay_buffer,
         observation_space=env.observation_space,
@@ -116,7 +103,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(required=True, dest='mode', help='Available modes:')
 
-    train_parser = subparsers.add_parser('make', help='Train an agent')
+    train_parser = subparsers.add_parser('train', help='Train an agent')
     train_parser.add_argument('--config', metavar='FILE', required=True)
     train_parser.add_argument('--checkpoints', metavar='DIR', required=False)
     train_parser.add_argument('--episodes', metavar='DIR', required=False)

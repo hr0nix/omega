@@ -78,6 +78,7 @@ def init_node(
 
     tree = update_value_normalization(tree, value)
     tree['expanded'] = tree['expanded'].at[node_index].set(True)
+    tree['predicted_value'] = tree['predicted_value'].at[node_index].set(value)
     tree['value_sum'] = tree['value_sum'].at[node_index].set(value)
     tree['num_visits'] = tree['num_visits'].at[node_index].set(1)
     tree['reward'] = tree['reward'].at[node_index].set(reward)
@@ -106,6 +107,7 @@ def make_tree(
         'parent_index': jnp.zeros(tree_nodes_max_num, dtype=jnp.int32),
         'first_free_index': jnp.ones(1, dtype=jnp.int32),  # First free index is the next node after root
         'num_visits': jnp.zeros(tree_nodes_max_num, dtype=jnp.int32),
+        'predicted_value': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'value_sum': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'reward': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'prior_policy_probs': jnp.zeros((tree_nodes_max_num, num_actions), dtype=jnp.float32),
@@ -235,12 +237,13 @@ def mcts(
         init_val=(simulation_loop_key, tree, 0)
     )
 
-    root_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
-    root_value = get_state_value(tree=updated_tree, node_index=0)
+    root_mcts_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
+    root_mcts_value = get_state_value(tree=updated_tree, node_index=0)
+    root_predicted_value = tree['predicted_value'][0]
 
     stats = {
         'mcts_search_depth': max_depth,
     }
 
-    return root_policy_log_probs, root_value, stats
+    return root_mcts_policy_log_probs, root_mcts_value, root_predicted_value, stats
 
