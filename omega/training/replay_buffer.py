@@ -184,7 +184,7 @@ class ClusteringReplayBuffer(ReplayBuffer):
 
     def get_stats(self):
         return {
-            f'{key}/cluster_{cluster_id}': value
+            f'{key}_cluster_{cluster_id}': value
             for cluster_id in range(len(self._buffers))
             for key, value in self._buffers[cluster_id].get_stats().items()
         }

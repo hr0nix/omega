@@ -47,6 +47,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_priority_weight': 1.0,
         'initial_priority': 1.0,
         'use_priorities': False,
+        'reset_memory_every_day': False,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -102,7 +103,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             prediction_fn=functools.partial(self._model.apply, method=self._model.prediction),
         )
 
-    def _make_fake_observation_trajectory(self):
+    def _make_fake_observation(self):
         return {
             key: jnp.zeros(desc.shape, dtype=desc.dtype)
             for key, desc in self.observation_space.spaces.items()
@@ -120,7 +121,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return jnp.zeros(shape=(), dtype=jnp.int32)
 
     def _make_fake_representation_inputs(self):
-        return self._make_fake_memory(), self._make_fake_action(), self._make_fake_observation_trajectory()
+        return self._make_fake_memory(), self._make_fake_action(), self._make_fake_observation()
 
     def _make_fake_dynamics_inputs(self):
         return self._make_fake_latent_state(), self._make_fake_action()
@@ -173,11 +174,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': jnp.ones(batch_size, dtype=jnp.bool_),
         }
 
-    def update_memory_batch(self, prev_memory, metadata, actions, done):
+    def update_memory_batch(self, prev_memory, metadata, actions, done, last_step_of_the_day):
         initial_memory_state = self._train_state.initial_memory_state_fn(self._train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
-        # Reset memory where a new episode has been started
-        new_memory_state = metadata['memory_state_after'] * (1 - done) + initial_memory_state * done
+        if last_step_of_the_day and self._config['reset_memory_every_day']:
+            # Unconditionally reset memory after a day ends
+            new_memory_state = jnp.repeat(
+                initial_memory_state,
+                repeats=metadata['memory_state_after'].shape[0],
+                axis=0)
+        else:
+            # Reset memory where a new episode has been started
+            new_memory_state = metadata['memory_state_after'] * (1 - done) + initial_memory_state * done
         return {
             'memory': new_memory_state,
             'prev_actions': actions,

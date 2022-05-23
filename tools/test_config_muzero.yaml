@@ -26,7 +26,6 @@ agent_config:
     state_encoder_config:
       num_memory_units: 4
       memory_dim: 16
-      transformer_use_gating: true
       glyph_embedding_dim: 16
       use_fixed_positional_embeddings: false
       use_bl_stats: false
@@ -35,13 +34,16 @@ agent_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
-      transformer_use_gating: true
     policy_network_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
-      transformer_use_gating: true
     dynamics_transformer_config:
+      num_blocks: 1
+      num_heads: 1
+      fc_inner_dim: 16
+      use_gating: true
+    memory_aggregator_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16

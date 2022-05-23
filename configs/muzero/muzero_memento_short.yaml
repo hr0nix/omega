@@ -4,7 +4,7 @@ train_config:
   num_collection_steps: 16
   num_workers: 2
   num_envs: 32
-  env_name: 'MiniHack-Room-Random-5x5-v0'
+  env_name: 'MiniHack-Memento-Short-F2-v0'
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -14,6 +14,7 @@ train_config:
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
+  reward_values: [-0.01, 0.0, -1.0, 1.0]
   lr: 0.001
   discount_factor: 0.95
   num_train_unroll_steps: 5
@@ -27,7 +28,6 @@ agent_config:
   value_loss_weight: 1.0
   reward_loss_weight: 1.0
   state_similarity_loss_weight: 0.05
-  reward_values: [-0.01, 0.0, 1.0]
   model_config:
     state_encoder_config:
       glyph_crop_area: [21, 30]

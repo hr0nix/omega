@@ -69,7 +69,12 @@ class Trainer(abc.ABC):
             )
 
             self._agent_memory = self.agent.update_memory_batch(
-                self._agent_memory, metadata_batch_gpu, action_batch_gpu, reward_done_next_state_batch_cpu['done'])
+                prev_memory=self._agent_memory,
+                metadata=metadata_batch_gpu,
+                actions=action_batch_gpu,
+                done=reward_done_next_state_batch_cpu['done'],
+                last_step_of_the_day=step == self.num_collection_steps - 1,
+            )
 
         return self._stack_transition_batches(transition_batches)
 
