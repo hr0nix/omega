@@ -1,7 +1,10 @@
-from typing import Optional
+from dataclasses import field
+from typing import Optional, Dict
 
 import jax.random
 from flax import linen as nn
+
+from .gating import GRUGate
 
 
 class TransformerBlock(nn.Module):
@@ -9,6 +12,8 @@ class TransformerBlock(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
+    use_gating: bool = False
+    gating_config: Dict = field(default_factory=dict)
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -25,6 +30,9 @@ class TransformerBlock(nn.Module):
         self._fc_norm = nn.LayerNorm()
         self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
         self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
+        if self.use_gating:
+            self._attention_gate = GRUGate(**self.gating_config)
+            self._fc_gate = GRUGate(**self.gating_config)
 
     def __call__(self, queries, keys_values, deterministic=None, rng=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
@@ -41,7 +49,10 @@ class TransformerBlock(nn.Module):
         l = self._att(q, kv)
         rng, subkey = jax.random.split(rng)
         l = self._att_dropout(l, deterministic=deterministic, rng=subkey)
-        l = l_prev + l
+        if self.use_gating:
+            l = self._attention_gate(l_prev, l)
+        else:
+            l = l_prev + l
 
         l_prev = l
         l = self._fc_norm(l)
@@ -50,7 +61,10 @@ class TransformerBlock(nn.Module):
         l = self._fc(l)
         rng, subkey = jax.random.split(rng)
         l = self._fc_dropout(l, deterministic=deterministic, rng=subkey)
-        l = l_prev + l
+        if self.use_gating:
+            l = self._fc_gate(l_prev, l)
+        else:
+            l = l_prev + l
 
         return l
 
@@ -61,6 +75,8 @@ class TransformerNetBase(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
+    use_gating: bool = False
+    gating_config: Dict = field(default_factory=dict)
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -70,8 +86,10 @@ class TransformerNetBase(nn.Module):
                 fc_inner_dim=self.fc_inner_dim,
                 num_heads=self.num_heads,
                 dropout_rate=self.dropout_rate,
-                name=f'block_{block_idx}',
-                deterministic=self.deterministic
+                use_gating=self.use_gating,
+                gating_config=self.gating_config,
+                deterministic=self.deterministic,
+                name = f'block_{block_idx}',
             )
             for block_idx in range(self.num_blocks)
         ]
