@@ -18,6 +18,7 @@ from omega.utils.wandb import get_wandb_id
 
 
 def make_env(train_config, episodes_dir):
+    # Import custom environments defined in omega
     import omega.minihack.envs  # noqa
 
     return gym.make(

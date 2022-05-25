@@ -11,6 +11,14 @@ class EnvWrapper(gym.Env):
         self._is_done = None
 
     @property
+    def observation_space(self):
+        return self._env.observation_space
+
+    @property
+    def action_space(self):
+        return self._env.action_space
+
+    @property
     def current_state(self):
         return self._current_state
 
