@@ -15,7 +15,8 @@ class PerceiverNethackStateEncoder(nn.Module):
     """
     Encodes a nethack state observation into a latent memory vector.
     """
-    glyph_crop_area: Optional[Tuple[int, int]] = None
+    glyph_crop_start: Optional[Tuple[int, int]] = None
+    glyph_crop_size: Optional[Tuple[int, int]] = None
     glyph_embedding_dim: int = 64
     num_memory_units: int = 128
     memory_dim: int = 64
@@ -34,8 +35,8 @@ class PerceiverNethackStateEncoder(nn.Module):
     deterministic: Optional[bool] = None
 
     def setup(self):
-        if self.glyph_crop_area is not None:
-            self._glyphs_size = self.glyph_crop_area
+        if self.glyph_crop_size is not None:
+            self._glyphs_size = self.glyph_crop_size
         else:
             self._glyphs_size = nle.nethack.DUNGEON_SHAPE
 
@@ -131,11 +132,14 @@ class PerceiverNethackStateEncoder(nn.Module):
         glyphs = current_state_batch['glyphs']
         batch_size = glyphs.shape[0]
 
-        if self.glyph_crop_area is not None:
+        if self.glyph_crop_size is not None:
             # Can be used to crop unused observation area to speedup convergence
-            start_r = (nle.nethack.DUNGEON_SHAPE[0] - self.glyph_crop_area[0]) // 2
-            start_c = (nle.nethack.DUNGEON_SHAPE[1] - self.glyph_crop_area[1]) // 2
-            glyphs = glyphs[:, start_r:start_r + self.glyph_crop_area[0], start_c:start_c + self.glyph_crop_area[1]]
+            if self.glyph_crop_start is not None:
+                start_r, start_c = self.glyph_crop_start
+            else:
+                start_r = (nle.nethack.DUNGEON_SHAPE[0] - self.glyph_crop_size[0]) // 2
+                start_c = (nle.nethack.DUNGEON_SHAPE[1] - self.glyph_crop_size[1]) // 2
+            glyphs = glyphs[:, start_r:start_r + self.glyph_crop_size[0], start_c:start_c + self.glyph_crop_size[1]]
 
         # Perceiver latent memory embeddings
         memory = self._memory_embedder(batch_size)

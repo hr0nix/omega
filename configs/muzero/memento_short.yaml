@@ -30,7 +30,8 @@ agent_config:
   state_similarity_loss_weight: 0.05
   model_config:
     state_encoder_config:
-      glyph_crop_area: [21, 30]
+      glyph_crop_start: [0, 0]
+      glyph_crop_size: [13, 20]
       glyph_embedding_dim: 32
       num_memory_units: 8
       memory_dim: 32
@@ -50,6 +51,10 @@ agent_config:
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128
     dynamics_transformer_config:
+      num_blocks: 2
+      num_heads: 4
+      fc_inner_dim: 128
+    memory_aggregator_config:
       num_blocks: 2
       num_heads: 4
       fc_inner_dim: 128
