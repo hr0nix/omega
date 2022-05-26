@@ -5,7 +5,6 @@ train_config:
   num_envs: 1
   num_workers: 1
   env_name: 'MiniHack-Room-Random-5x5-v0'
-  use_dense_staircase_reward: false
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -18,10 +17,9 @@ agent_config:
   use_priorities: false
   lr: 0.001
   discount_factor: 0.999
-  train_batch_size: 2
   num_train_steps: 1
   num_train_unroll_steps: 2
-  reanalyse_batch_size: 1
+  reanalyze_batch_size: 1
   num_mcts_simulations: 2
   reward_values: [-0.01, 0.0, 1.0]
   model_config:
@@ -48,7 +46,3 @@ agent_config:
       num_heads: 1
       fc_inner_dim: 16
       use_gating: true
-#    memory_aggregator_config:
-#      num_blocks: 1
-#      num_heads: 1
-#      fc_inner_dim: 16
