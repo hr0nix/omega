@@ -177,15 +177,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def update_memory_batch(self, prev_memory, metadata, actions, done, last_step_of_the_day):
         initial_memory_state = self._train_state.initial_memory_state_fn(self._train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
+        batch_size = metadata['memory_state_after'].shape[0]
         if last_step_of_the_day and self._config['reset_memory_every_day']:
             # Unconditionally reset memory after a day ends
-            new_memory_state = jnp.repeat(
-                initial_memory_state,
-                repeats=metadata['memory_state_after'].shape[0],
-                axis=0)
+            new_memory_state = jnp.repeat(initial_memory_state, repeats=batch_size, axis=0)
         else:
             # Reset memory where a new episode has been started
-            new_memory_state = metadata['memory_state_after'] * (1 - done) + initial_memory_state * done
+            done_memory_shaped = jnp.reshape(done, (batch_size, 1, 1))
+            new_memory_state = (
+                metadata['memory_state_after'] * (1 - done_memory_shaped) +
+                initial_memory_state * done_memory_shaped
+            )
         return {
             'memory': new_memory_state,
             'prev_actions': actions,
@@ -202,7 +204,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         representation_fn = functools.partial(train_state.representation_fn, deterministic=deterministic)
 
         def representation_loop(state, input):
-            prev_memory, rng = state
+            prev_memory, first_timestamp_of_the_day, rng = state
             representation_key, rng = jax.random.split(rng)
 
             prev_action = input['prev_action']
@@ -211,20 +213,24 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
             # Reset the memory if the previous state was terminal
             initial_memory_state = initial_memory_state_fn(params)
-            prev_memory = prev_memory * (1 - prev_done) + initial_memory_state * prev_done
+            reinit_memory = jnp.logical_or(
+                prev_done,
+                jnp.logical_and(first_timestamp_of_the_day, self._config['reset_memory_every_day'])
+            )
+            prev_memory = prev_memory * (1 - reinit_memory) + initial_memory_state * reinit_memory
 
             # Recurrently embed the observation and compute the updated memory
             latent_observation, updated_memory = representation_fn(
                 params, prev_memory, prev_action, cur_observation, representation_key)
 
-            return (updated_memory, rng), (latent_observation, updated_memory)
+            return (updated_memory, False, rng), (latent_observation, updated_memory)
 
         num_timestamps = pytree.get_axis_dim(observation_trajectory, axis=0)
         # Recompute memory within the trajectory but use a fixed initial state
         initial_memory = memory_trajectory['memory'][0]
         _, (latent_state_trajectory, updated_memory_trajectory) = jax.lax.scan(
             f=representation_loop,
-            init=(initial_memory, rng),
+            init=(initial_memory, True, rng),
             xs={
                 'prev_action': memory_trajectory['prev_actions'],
                 'prev_done': memory_trajectory['prev_done'],
