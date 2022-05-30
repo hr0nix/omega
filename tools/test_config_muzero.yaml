@@ -1,10 +1,10 @@
 train_config:
   num_days: 3
   epoch_every_num_days: 1
-  num_collection_steps: 4
-  num_envs: 2
+  num_collection_steps: 32
+  num_envs: 1
   num_workers: 1
-  env_name: 'MiniHack-Room-Random-5x5-v0'
+  env_name: 'MiniHack-MemoryTestEasy-v0'
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -21,7 +21,7 @@ agent_config:
   num_train_unroll_steps: 2
   reanalyze_batch_size: 1
   num_mcts_simulations: 2
-  reward_values: [-0.01, 0.0, 1.0]
+  reward_values: [-0.01, 0.0, -1.0, 1.0]
   model_config:
     state_encoder_config:
       num_memory_units: 3

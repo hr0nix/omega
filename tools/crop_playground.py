@@ -1,16 +1,17 @@
 import gym
 import minihack
 import nle.nethack
+import omega.minihack.envs
 
 from omega.training.env_wrapper import EnvWrapper
 
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-Memento-Short-F2-v0'
+ENV_NAME = 'MiniHack-CreditAssignmentTest-v0'
 NUM_STEPS = 50
 GLYPH_CROP_START = [0, 0]
-GLYPH_CROP_AREA = [13, 20]
+GLYPH_CROP_AREA = [21, 20]
 
 
 def generate_random_action(env):
