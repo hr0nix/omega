@@ -89,7 +89,7 @@ class Trainer(abc.ABC):
 
 
 class DummyTrainer(Trainer):
-    def _run_night(self, agent, stats, collected_trajectories):
+    def _run_night(self, stats, collected_trajectories):
         pass
 
 

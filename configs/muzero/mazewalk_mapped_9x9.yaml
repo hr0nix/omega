@@ -9,7 +9,7 @@ train_config:
   replay_buffer:
     type: uniform_over_good_and_bad
     cluster_buffer:
-      type: uniform
+      type: fifo
       buffer_size: 50000
     good_total_reward_threshold: 0.5
 agent_config:

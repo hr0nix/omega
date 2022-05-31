@@ -66,6 +66,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             for i in range(len(self._config['reward_values']))
         }
         self._replay_buffer = replay_buffer
+        self._current_train_step = 0
+
         self._build_model(model_factory)
 
     def _build_model(self, model_factory):
@@ -147,7 +149,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def train_on_batch(self, trajectory_batch):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
-        self._add_to_replay_buffer(trajectory_batch)
+        self._add_to_replay_buffer(trajectory_batch, self._current_train_step)
+        self._current_train_step += 1
 
         stats_per_train_step = []
         for train_step in range(self._config['num_train_steps']):
@@ -241,14 +244,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return latent_state_trajectory, updated_memory_trajectory
 
-    def _add_to_replay_buffer(self, trajectory_batch):
+    def _add_to_replay_buffer(self, trajectory_batch, current_train_step):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
         trajectory_batch = pytree.to_cpu(trajectory_batch)
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
         for trajectory_idx in range(batch_size):
             trajectory = pytree.slice_from_batch(trajectory_batch, trajectory_idx)
             priority = self._config['initial_priority'] if self._config['use_priorities'] else None
-            self._replay_buffer.add_trajectory(trajectory, priority)
+            self._replay_buffer.add_trajectory(trajectory, priority, current_train_step)
 
     def _update_replay_buffer_priorities(self, replayed_trajectories, trajectory_loss_details):
         reward_loss = pytree.to_cpu(trajectory_loss_details['reward_loss'])

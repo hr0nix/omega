@@ -11,7 +11,7 @@ from ..utils.profiling import timeit
 # TODO: ideally you'd want to save replay buffer state so that loading from checkpoint restores state fully
 class ReplayBuffer(abc.ABC):
     @abc.abstractmethod
-    def add_trajectory(self, trajectory, priority=None):
+    def add_trajectory(self, trajectory, priority=None, current_day=None):
         pass
 
     @abc.abstractmethod
@@ -38,7 +38,7 @@ class FIFOReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size):
         self._buffer = deque(maxlen=buffer_size)
 
-    def add_trajectory(self, trajectory, priority=None):
+    def add_trajectory(self, trajectory, priority=None, current_day=None):
         if priority is not None:
             raise ValueError('Priorities are not supported with this replay buffer type')
 
@@ -60,6 +60,50 @@ class FIFOReplayBuffer(ReplayBuffer):
         }
 
 
+class MaxAgeReplayBuffer(ReplayBuffer):
+    def __init__(self, max_age, max_buffer_size):
+        if max_buffer_size is None:
+            raise ValueError('Max buffer size must be specified so that we can create an efficient deque')
+
+        self._max_age = max_age
+        self._trajectories = deque(maxlen=max_buffer_size)
+        self._trajectory_add_day = deque(maxlen=max_buffer_size)
+
+    def _try_evict(self, current_day):
+        if self.size > 0 and self._trajectory_add_day[-1] > current_day:
+            raise ValueError('Current day must be monotonically increasing')
+
+        while self.size > 0 and current_day - self._trajectory_add_day[0] > self._max_age:
+            self._trajectories.popleft()
+            self._trajectory_add_day.popleft()
+
+    def add_trajectory(self, trajectory, priority=None, current_day=None):
+        if priority is not None:
+            raise ValueError('Priorities are not supported with this replay buffer type')
+        if current_day is None:
+            raise ValueError('Current day must be set this replay buffer type')
+
+        self._try_evict(current_day)
+
+        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        self._trajectories.append(trajectory)
+        self._trajectory_add_day.append(current_day)
+
+    def sample_trajectory_batch(self, batch_size):
+        random_indices = np.random.randint(low=0, high=len(self._trajectories), size=batch_size)
+        random_trajectories = [self._trajectories[i] for i in random_indices]
+        return random_trajectories
+
+    @property
+    def size(self):
+        return len(self._trajectories)
+
+    def get_stats(self):
+        return {
+            'replay_buffer_size': len(self._trajectories)
+        }
+
+
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, alpha=1.0, epsilon=1e-3, good_total_reward_threshold=0.5):
         self._max_size = buffer_size
@@ -72,7 +116,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._last_batch_avg_priority = 0.0
         self._num_good_trajectories_in_buffer = 0
 
-    def add_trajectory(self, trajectory, priority=None):
+    def add_trajectory(self, trajectory, priority=None, current_day=None):
         self._validate_priority(priority)
 
         trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
@@ -140,9 +184,9 @@ class ClusteringReplayBuffer(ReplayBuffer):
         self._buffers = [cluster_buffer_fn() for _ in range(num_clusters)]
         self._clustering_fn = clustering_fn
 
-    def add_trajectory(self, trajectory, priority=None):
+    def add_trajectory(self, trajectory, priority=None, current_day=None):
         cluster_id = self._get_trajectory_cluster(trajectory)
-        self._buffers[cluster_id].add_trajectory(trajectory, priority)
+        self._buffers[cluster_id].add_trajectory(trajectory, priority, current_day)
 
     def update_priority(self, trajectory, priority):
         cluster_id = self._get_trajectory_cluster(trajectory)
@@ -193,8 +237,11 @@ class ClusteringReplayBuffer(ReplayBuffer):
 def create_from_config(config):
     buffer_type = config['type']
 
-    if buffer_type == 'uniform':
+    if buffer_type == 'fifo':
         return FIFOReplayBuffer(buffer_size=config['buffer_size'])
+
+    elif buffer_type == 'max_age':
+        return MaxAgeReplayBuffer(max_age=config['max_age'], max_buffer_size=config['max_buffer_size'])
 
     elif buffer_type == 'uniform_over_good_and_bad':
         clustering_fn = lambda t: 1 if np.sum(t['rewards']) >= config['good_total_reward_threshold'] else 0
