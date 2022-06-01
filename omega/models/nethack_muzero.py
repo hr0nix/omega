@@ -105,17 +105,19 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         """
         Produces the representation of an observation.
         """
-        chex.assert_rank(observation['glyphs'], 2)  # width, height
+        chex.assert_rank(observation['glyphs'], 2)  # rows, cols
         chex.assert_rank(rng, 1)
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         state_encoder_key, memory_aggregator_key = jax.random.split(rng, 2)
 
-        observation_batch = pytree.expand_dims(observation, axis=0)  # State encoder expects a batch
-        latent_observation_batch = self._state_encoder(
-            observation_batch, deterministic=deterministic, rng=state_encoder_key)
-        latent_observation = pytree.squeeze(latent_observation_batch, axis=0)
+        # TODO: rewrite layers so that they don't assume that the batch dimension is present
+        observation = pytree.expand_dims(observation, axis=0)
+        prev_memory = pytree.expand_dims(prev_memory, axis=0)
+        prev_action = pytree.expand_dims(prev_action, axis=0)
+
+        latent_observation = self._state_encoder(observation, deterministic=deterministic, rng=state_encoder_key)
 
         # Fuse prev action embedding with prev memory
         prev_action_embedding = self._action_embedder(prev_action)
@@ -126,7 +128,12 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         representation = self._memory_aggregator(
             latent_observation, prev_memory_with_action, deterministic=deterministic, rng=memory_aggregator_key)
 
-        chex.assert_rank(representation, 2)
+        chex.assert_rank(representation, 3)
+        chex.assert_axis_dimension(representation, 0, 1)
+
+        # Get rid of the no longer needed batch dimension
+        representation = pytree.squeeze(representation, axis=0)
+
         # Also return the representation as the updated memory value
         return representation, representation
 
