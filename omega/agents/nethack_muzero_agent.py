@@ -15,6 +15,7 @@ import jax.experimental.host_callback
 import optax
 import rlax
 
+from ..neural.optimization import clip_gradient_by_norm
 from ..math import entropy, discretize_onehot, undiscretize_expected
 from ..utils import pytree
 from ..utils.flax import merge_params
@@ -40,6 +41,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_weight': 1.0,
         'reward_loss_weight': 1.0,
         'state_similarity_loss_weight': 1.0,
+        'max_gradient_norm': 100000.0,
         'act_deterministic': False,
         'reanalyze_deterministic': False,
         'train_deterministic': False,
@@ -448,9 +450,15 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         rng, grad_key = jax.random.split(rng)
         grad_and_loss_details_func = jax.grad(loss_function, argnums=0, has_aux=True)
         grads, per_trajectory_loss_details = grad_and_loss_details_func(train_state.params, grad_key)
+        grads, grad_norm = clip_gradient_by_norm(grads, self._config['max_gradient_norm'], return_norm=True)
         train_state = train_state.apply_gradients(grads=grads)
 
-        return train_state, pytree.mean(per_trajectory_loss_details), per_trajectory_loss_details
+        stats = pytree.mean(per_trajectory_loss_details)
+        stats = pytree.update(stats, {
+            'gradient_norm': grad_norm,
+        })
+
+        return train_state, stats, per_trajectory_loss_details
 
     # TODO: for some reason total execution time of this function
     # TODO: is 200 ms more than _make_next_training_batch_jit + sample_trajectory_batch
