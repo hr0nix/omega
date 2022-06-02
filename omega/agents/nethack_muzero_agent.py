@@ -357,7 +357,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     [
                         trajectory_latent_states,
                         jnp.zeros(
-                            shape=(num_unroll_steps + 1,) + trajectory_latent_states.shape[1:], dtype=jnp.float32
+                            shape=(num_unroll_steps,) + trajectory_latent_states.shape[1:], dtype=jnp.float32
                         )
                     ],
                     axis=0,
@@ -372,9 +372,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 for unroll_step in range(num_unroll_steps):  # TODO: lax.fori ?
                     rng, prediction_key, dynamics_key = jax.random.split(rng, 3)
 
-                    actions = trajectory['training_targets']['action_to_next_target'][:, unroll_step]
+                    actions = trajectory['training_targets']['actions'][:, unroll_step]
                     loss_mask = trajectory['training_targets']['unroll_step_mask'][:, unroll_step]
-                    after_terminal_state_mask = trajectory['training_targets']['after_terminal_state'][:, unroll_step]
+                    next_state_is_terminal_or_after = trajectory['training_targets']['next_state_is_terminal_or_after'][:, unroll_step]
                     value_targets = trajectory['training_targets']['value'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['rewards_one_hot'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
@@ -409,8 +409,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         axis=(-2, -1))
                     # We don't have targets at the end of a trajectory
                     state_similarity_loss_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
-                    # We also don't have next state targets after terminal states
-                    state_similarity_loss_mask *= 1.0 - after_terminal_state_mask
+                    # We also don't have next state targets for terminal states or anything after
+                    state_similarity_loss_mask *= 1.0 - next_state_is_terminal_or_after
                     state_similarity_loss += (
                         jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
                         (jnp.sum(state_similarity_loss_mask) + 1e-10)  # Just in case
@@ -515,9 +515,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'value': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'rewards_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'policy': jnp.zeros((num_timestamps, num_unroll_steps, num_actions), dtype=jnp.float32),
-                    'action_to_next_target': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.int32),
+                    'actions': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.int32),
                     'unroll_step_mask': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
-                    'after_terminal_state': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
+                    'next_state_is_terminal_or_after': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
                 }
             })
 
@@ -549,23 +549,23 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             }
 
             def unroll_loop_body(unroll_step, loop_state):
-                trajectory, padded_target_sources, after_terminal_state = loop_state
+                trajectory, padded_target_sources, state_is_terminal_or_after = loop_state
 
-                after_terminal_state_extra_dim = jnp.expand_dims(after_terminal_state, axis=-1)
+                state_is_terminal_or_after_extra_dim = jnp.expand_dims(state_is_terminal_or_after, axis=-1)
 
                 unroll_step_mask = jnp.arange(0, num_timestamps) < num_timestamps - unroll_step
-                action_to_next_target = jax.lax.dynamic_slice_in_dim(
+                actions = jax.lax.dynamic_slice_in_dim(
                     padded_target_sources['actions'], unroll_step, num_timestamps, axis=0)
                 # Value and reward targets are zero after we've reached an absorbing state
                 value_targets = (
                     jax.lax.dynamic_slice_in_dim(
                         padded_target_sources['state_values'], unroll_step, num_timestamps, axis=0) *
-                    (1.0 - after_terminal_state)
+                    (1.0 - state_is_terminal_or_after)
                 )
                 reward_targets_scalar = (
                     jax.lax.dynamic_slice_in_dim(
                         padded_target_sources['rewards_scalar'], unroll_step, num_timestamps, axis=0) *
-                    (1.0 - after_terminal_state)
+                    (1.0 - state_is_terminal_or_after)
                 )
 
                 # Policy target is uniform after we've reached an absorbing state
@@ -573,12 +573,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     padded_target_sources['log_mcts_action_probs'], unroll_step, num_timestamps, axis=0)
                 mcts_action_probs_slice = jnp.exp(log_mcts_action_probs_slice)
                 policy_target_probs = (
-                    mcts_action_probs_slice * (1.0 - after_terminal_state_extra_dim) +
-                    jnp.full_like(mcts_action_probs_slice, 1.0 / self.action_space.n) * after_terminal_state_extra_dim
+                    mcts_action_probs_slice * (1.0 - state_is_terminal_or_after_extra_dim) +
+                    jnp.full_like(mcts_action_probs_slice, 1.0 / self.action_space.n) * state_is_terminal_or_after_extra_dim
                 )
 
-                after_terminal_state = jnp.logical_or(
-                    after_terminal_state,
+                next_state_is_terminal_or_after = jnp.logical_or(
+                    state_is_terminal_or_after,
                     jax.lax.dynamic_slice_in_dim(padded_target_sources['done'], unroll_step, num_timestamps, axis=0)
                 )
 
@@ -587,15 +587,16 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'rewards_scalar' : trajectory['training_targets']['rewards_scalar'].at[:, unroll_step].set(
                         reward_targets_scalar),
                     'policy': trajectory['training_targets']['policy'].at[:, unroll_step].set(policy_target_probs),
-                    'action_to_next_target': trajectory['training_targets']['action_to_next_target'].at[:, unroll_step].set(
-                        action_to_next_target),
+                    'actions': trajectory['training_targets']['actions'].at[:, unroll_step].set(
+                        actions),
                     'unroll_step_mask': trajectory['training_targets']['unroll_step_mask'].at[:, unroll_step].set(
                         unroll_step_mask),
-                    'after_terminal_state': trajectory['training_targets']['after_terminal_state'].at[:, unroll_step].set(
-                        after_terminal_state),
+                    'next_state_is_terminal_or_after':
+                        trajectory['training_targets']['next_state_is_terminal_or_after'].at[:, unroll_step].set(
+                            next_state_is_terminal_or_after),
                 }
 
-                return trajectory, padded_target_sources, after_terminal_state
+                return trajectory, padded_target_sources, next_state_is_terminal_or_after
 
             trajectory_with_targets, _, _ = jax.lax.fori_loop(
                 lower=0, upper=num_unroll_steps, body_fun=unroll_loop_body,
