@@ -8,10 +8,10 @@ from omega.training.env_wrapper import EnvWrapper
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-MemoryTestEasy-v0'
+ENV_NAME = 'MiniHack-MemoryTestMedium-v0'
 NUM_STEPS = 50
 GLYPH_CROP_START = [0, 0]
-GLYPH_CROP_AREA = [10, 10]
+GLYPH_CROP_AREA = [10, 12]
 
 
 def generate_random_action(env):

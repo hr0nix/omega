@@ -1,0 +1,21 @@
+MAZE: "mylevel",' '
+INIT_MAP:solidfill,' '
+GEOMETRY:left,top
+MAP
+|.|-------.
+-F--------.
+...........
+----------.
+----------.
+ENDMAP
+REGION:(0,0,11,5),lit,"ordinary"
+IF [50%] {
+    MONSTER: ('j', "blue jelly"),(1,0),asleep
+    TRAP:"pit", (10,0)
+    TRAP:"board", (10,4)
+} ELSE {
+    MONSTER: ('F', "lichen"),(1,0),asleep
+    TRAP:"pit", (10,4)
+    TRAP:"board", (10,0)
+}
+BRANCH:(0,2,0,2),(1,2,1,2)
