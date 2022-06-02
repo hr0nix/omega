@@ -14,7 +14,6 @@ train_config:
       max_age: 1
     good_total_reward_threshold: 0.5
 agent_config:
-  reset_memory_every_day: true
   use_priorities: false
   lr: 0.001
   discount_factor: 0.999

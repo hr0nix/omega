@@ -49,7 +49,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_priority_weight': 1.0,
         'initial_priority': 1.0,
         'use_priorities': False,
-        'reset_memory_every_day': False,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -179,20 +178,16 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': jnp.ones(batch_size, dtype=jnp.bool_),
         }
 
-    def update_memory_batch(self, prev_memory, metadata, actions, done, last_step_of_the_day):
+    def update_memory_batch(self, prev_memory, metadata, actions, done):
         initial_memory_state = self._train_state.initial_memory_state_fn(self._train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
         batch_size = metadata['memory_state_after'].shape[0]
-        if last_step_of_the_day and self._config['reset_memory_every_day']:
-            # Unconditionally reset memory after a day ends
-            new_memory_state = jnp.repeat(initial_memory_state, repeats=batch_size, axis=0)
-        else:
-            # Reset memory where a new episode has been started
-            done_memory_shaped = jnp.reshape(done, (batch_size, 1, 1))
-            new_memory_state = (
-                metadata['memory_state_after'] * (1 - done_memory_shaped) +
-                initial_memory_state * done_memory_shaped
-            )
+        done_memory_shaped = jnp.reshape(done, (batch_size, 1, 1))
+        # Reset memory where a new episode has been started
+        new_memory_state = (
+            metadata['memory_state_after'] * (1 - done_memory_shaped) +
+            initial_memory_state * done_memory_shaped
+        )
         return {
             'memory': new_memory_state,
             'prev_actions': actions,
@@ -216,13 +211,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             prev_done = input['prev_done']
             cur_observation = input['observation']
 
-            # Reset the memory if the previous state was terminal
+            # Reset the memory if this the current state is the first state of an episode
             initial_memory_state = initial_memory_state_fn(params)
-            reinit_memory = jnp.logical_or(
-                prev_done,
-                jnp.logical_and(first_timestamp_of_the_day, self._config['reset_memory_every_day'])
-            )
-            prev_memory = prev_memory * (1 - reinit_memory) + initial_memory_state * reinit_memory
+            prev_memory = prev_memory * (1 - prev_done) + initial_memory_state * prev_done
 
             # Recurrently embed the observation and compute the updated memory
             latent_observation, updated_memory = representation_fn(

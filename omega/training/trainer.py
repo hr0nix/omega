@@ -73,7 +73,6 @@ class Trainer(abc.ABC):
                 metadata=metadata_batch_gpu,
                 actions=action_batch_gpu,
                 done=reward_done_next_state_batch_cpu['done'],
-                last_step_of_the_day=step == self.num_collection_steps - 1,
             )
 
         return self._stack_transition_batches(transition_batches)
