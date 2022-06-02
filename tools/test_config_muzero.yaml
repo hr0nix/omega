@@ -1,7 +1,7 @@
 train_config:
   num_days: 3
   epoch_every_num_days: 1
-  num_collection_steps: 32
+  num_collection_steps: 3
   num_envs: 1
   num_workers: 1
   env_name: 'MiniHack-MemoryTestEasy-v0'
