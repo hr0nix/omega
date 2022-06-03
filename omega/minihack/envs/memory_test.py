@@ -40,22 +40,29 @@ class MiniHackCreditAssignmentTest(MiniHackMemoryTestBase):
         )
 
 
-class MiniHackMemoryTestEasy(MiniHackMemoryTestBase):
+class MiniHackMemoryTest4Steps(MiniHackMemoryTestBase):
     def __init__(self, *args, **kwargs):
-        super().__init__(
-            *args,
-            des_file='memory_test_easy.des',
-            **kwargs
-        )
+        super().__init__(*args, des_file='memory_test_4_steps.des', **kwargs)
 
 
-class MiniHackMemoryTestMedium(MiniHackMemoryTestBase):
+class MiniHackMemoryTest5Steps(MiniHackMemoryTestBase):
     def __init__(self, *args, **kwargs):
-        super().__init__(
-            *args,
-            des_file='memory_test_medium.des',
-            **kwargs
-        )
+        super().__init__(*args, des_file='memory_test_5_steps.des', **kwargs)
+
+
+class MiniHackMemoryTest6Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_6_steps.des', **kwargs)
+
+
+class MiniHackMemoryTest7Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_7_steps.des', **kwargs)
+
+
+class MiniHackMemoryTest8Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_8_steps.des', **kwargs)
 
 
 registration.register(
@@ -65,8 +72,32 @@ registration.register(
 
 
 registration.register(
-    id="MiniHack-MemoryTestEasy-v0",
-    entry_point="omega.minihack.envs:MiniHackMemoryTestEasy",
+    id="MiniHack-MemoryTest-4-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest4Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-5-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest5Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-6-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest6Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-7-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest7Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-8-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest8Steps",
 )
 
 

@@ -2,20 +2,20 @@ MAZE: "mylevel",' '
 INIT_MAP:solidfill,' '
 GEOMETRY:left,top
 MAP
-|.|-------.
--F--------.
-|..........
-----------.
-----------.
+|.|----|
+-F----.|
+|......|
+------.|
+--------
 ENDMAP
-REGION:(0,0,11,5),lit,"ordinary"
+REGION:(0,0,20,20),lit,"ordinary"
 IF [50%] {
     MONSTER: ('j', "blue jelly"),(1,0),asleep
-    TRAP:"pit", (10,0)
-    TRAP:"board", (10,4)
+    TRAP:"pit", (6,1)
+    TRAP:"board", (6,3)
 } ELSE {
     MONSTER: ('F', "lichen"),(1,0),asleep
-    TRAP:"pit", (10,4)
-    TRAP:"board", (10,0)
+    TRAP:"pit", (6,3)
+    TRAP:"board", (6,1)
 }
 BRANCH:(1,2,1,2),(2,2,2,2)

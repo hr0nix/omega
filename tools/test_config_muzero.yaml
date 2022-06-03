@@ -4,7 +4,7 @@ train_config:
   num_collection_steps: 3
   num_envs: 1
   num_workers: 1
-  env_name: 'MiniHack-MemoryTestEasy-v0'
+  env_name: 'MiniHack-MemoryTest-6-v0'
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
