@@ -65,6 +65,21 @@ class MiniHackMemoryTest8Steps(MiniHackMemoryTestBase):
         super().__init__(*args, des_file='memory_test_8_steps.des', **kwargs)
 
 
+class MiniHackMemoryTest9Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_9_steps.des', **kwargs)
+
+
+class MiniHackMemoryTest10Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_10_steps.des', **kwargs)
+
+
+class MiniHackMemoryTest11Steps(MiniHackMemoryTestBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, des_file='memory_test_11_steps.des', **kwargs)
+
+
 registration.register(
     id="MiniHack-CreditAssignmentTest-v0",
     entry_point="omega.minihack.envs:MiniHackCreditAssignmentTest",
@@ -102,6 +117,18 @@ registration.register(
 
 
 registration.register(
-    id="MiniHack-MemoryTestMedium-v0",
-    entry_point="omega.minihack.envs:MiniHackMemoryTestMedium",
+    id="MiniHack-MemoryTest-9-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest9Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-10-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest10Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-11-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTest11Steps",
 )
