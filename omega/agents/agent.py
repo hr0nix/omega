@@ -21,5 +21,5 @@ class Agent(abc.ABC):
     def init_memory_batch(self, batch_size):
         return {}
 
-    def update_memory_batch(self, prev_memory, metadata, actions, done):
+    def update_memory_batch(self, prev_memory, new_memory_state, actions, done):
         return prev_memory

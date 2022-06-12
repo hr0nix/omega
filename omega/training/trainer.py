@@ -44,6 +44,7 @@ class Trainer(abc.ABC):
             # Copy actions back to CPU because indexing GPU memory will slow everything down significantly
             action_batch_cpu = pytree.to_cpu(action_batch_gpu)
             reward_done_next_state_batch_cpu = self._batched_env_stepper.step(action_batch_cpu)
+            reward_done_next_state_batch_gpu = pytree.to_gpu(reward_done_next_state_batch_cpu)
 
             for env_index in range(self._num_envs):
                 if stats is not None:
@@ -63,6 +64,7 @@ class Trainer(abc.ABC):
                     memory_before=self._agent_memory,
                     current_state=current_state_batch_cpu,
                     actions=action_batch_gpu,
+                    # TODO: rename "metadata" into "act_metadata" for clarity
                     metadata=metadata_batch_gpu,
                     **reward_done_next_state_batch_cpu,
                 )
@@ -70,9 +72,9 @@ class Trainer(abc.ABC):
 
             self._agent_memory = self.agent.update_memory_batch(
                 prev_memory=self._agent_memory,
-                metadata=metadata_batch_gpu,
+                new_memory_state=metadata_batch_gpu['memory_state_after'],
                 actions=action_batch_gpu,
-                done=reward_done_next_state_batch_cpu['done'],
+                done=reward_done_next_state_batch_gpu['done'],
             )
 
         return self._stack_transition_batches(transition_batches)

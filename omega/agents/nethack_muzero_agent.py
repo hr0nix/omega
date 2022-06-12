@@ -170,8 +170,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             if self._config['use_priorities']:
                 self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
 
-            memory_stats = self._maybe_update_next_trajectory_memory(
-                batch_items, training_batch['mcts_reanalyze']['memory_state_after'])
+            memory_stats = self._maybe_update_next_trajectory_memory(batch_items, training_batch)
             train_step_stats = pytree.update(train_step_stats, memory_stats)
 
             stats_per_train_step.append(train_step_stats)
@@ -195,14 +194,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': jnp.ones(batch_size, dtype=jnp.bool_),
         }
 
-    def update_memory_batch(self, prev_memory, metadata, actions, done):
+    def update_memory_batch(self, prev_memory, new_memory_state, actions, done):
         initial_memory_state = self._train_state.initial_memory_state_fn(self._train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
-        batch_size = metadata['memory_state_after'].shape[0]
+        batch_size = new_memory_state.shape[0]
         done_memory_shaped = jnp.reshape(done, (batch_size, 1, 1))
         # Reset memory where a new episode has been started
         new_memory_state = (
-            metadata['memory_state_after'] * (1 - done_memory_shaped) +
+            new_memory_state * (1 - done_memory_shaped) +
             initial_memory_state * done_memory_shaped
         )
         return {
@@ -259,7 +258,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         trajectory_batch = pytree.to_cpu(trajectory_batch)
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
         for env_idx in range(batch_size):
-            trajectory = pytree.slice_from_batch(trajectory_batch, env_idx)
+            trajectory = pytree.batch_dim_slice(trajectory_batch, env_idx)
             priority = self._config['initial_priority'] if self._config['use_priorities'] else None
             self._replay_buffer.add_trajectory(
                 trajectory_id=self.TrajectoryId(env_index=env_idx, step=current_train_step),
@@ -278,8 +277,15 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         for index, item in enumerate(replayed_items):
             self._replay_buffer.update_priority(item.id, priorities[index])
 
-    def _maybe_update_next_trajectory_memory(self, replayed_items, next_trajectory_memory):
-        next_trajectory_memory_cpu = pytree.to_cpu(next_trajectory_memory)
+    def _maybe_update_next_trajectory_memory(self, replayed_items, training_batch):
+        # Make sure terminal states are taken into account when updating memory
+        updated_memory = self.update_memory_batch(
+            pytree.timestamp_dim_slice(training_batch['memory_before'], slice_idx=-1),
+            pytree.timestamp_dim_slice(training_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
+            pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
+            pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
+        )
+        updated_memory_state_cpu = pytree.to_cpu(updated_memory['memory'])
 
         memory_diffs = []
         for index, item in enumerate(replayed_items):
@@ -290,12 +296,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 assert item.id.step == self._current_train_step
                 continue
             # TODO: it's not nice to mix numpy and jax arrays, switch to using jax on CPU as well
-            memory_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
-            diff_sqr = np.mean((memory_copy - next_trajectory_memory_cpu[index][-1]) ** 2)
+            memory_state_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            diff_sqr = np.mean((memory_state_copy - updated_memory_state_cpu[index, -1]) ** 2)
             memory_diffs.append(diff_sqr)
-            memory_copy[0] = next_trajectory_memory_cpu[index][-1]
+            memory_state_copy[0] = updated_memory_state_cpu[index, -1]
             if self._config['update_next_trajectory_memory']:
-                next_trajectory_item.trajectory['memory_before']['memory'] = memory_copy
+                next_trajectory_item.trajectory['memory_before']['memory'] = memory_state_copy
 
         stats = {}
         if len(memory_diffs) > 0:

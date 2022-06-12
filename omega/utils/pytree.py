@@ -63,8 +63,13 @@ def get_axis_dim(pytree, axis):
     return axis_dim
 
 
-def slice_from_batch(batch, slice_idx):
+# TODO: introduce a universal slicer
+def batch_dim_slice(batch, slice_idx):
     return jax.tree_map(lambda t: t[slice_idx, ...], batch)
+
+
+def timestamp_dim_slice(batch, slice_idx):
+    return jax.tree_map(lambda t: t[:, slice_idx, ...], batch)
 
 
 def stack(pytrees, axis, result_device=None):
