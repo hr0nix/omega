@@ -165,11 +165,16 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         for train_step in range(self._config['num_train_steps']):
             training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
             training_stats, per_trajectory_loss_details = self._train(training_batch)
+            train_step_stats = pytree.update(reanalyse_stats, training_stats)
+
             if self._config['use_priorities']:
                 self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
-            if self._config['update_next_trajectory_memory']:
-                self._update_next_trajectory_memory(batch_items, training_batch['mcts_reanalyze']['memory_state_after'])
-            stats_per_train_step.append(pytree.update(reanalyse_stats, training_stats))
+
+            memory_stats = self._maybe_update_next_trajectory_memory(
+                batch_items, training_batch['mcts_reanalyze']['memory_state_after'])
+            train_step_stats = pytree.update(train_step_stats, memory_stats)
+
+            stats_per_train_step.append(train_step_stats)
 
         self._current_train_step += 1
 
@@ -273,9 +278,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         for index, item in enumerate(replayed_items):
             self._replay_buffer.update_priority(item.id, priorities[index])
 
-    def _update_next_trajectory_memory(self, replayed_items, next_trajectory_memory):
+    def _maybe_update_next_trajectory_memory(self, replayed_items, next_trajectory_memory):
         next_trajectory_memory_cpu = pytree.to_cpu(next_trajectory_memory)
 
+        memory_diffs = []
         for index, item in enumerate(replayed_items):
             next_trajectory_id = self.TrajectoryId(env_index=item.id.env_index, step=item.id.step + 1)
             next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
@@ -285,8 +291,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 continue
             # TODO: it's not nice to mix numpy and jax arrays, switch to using jax on CPU as well
             memory_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            diff_sqr = np.mean((memory_copy - next_trajectory_memory_cpu[index][-1]) ** 2)
+            memory_diffs.append(diff_sqr)
             memory_copy[0] = next_trajectory_memory_cpu[index][-1]
-            next_trajectory_item.trajectory['memory_before']['memory'] = memory_copy
+            if self._config['update_next_trajectory_memory']:
+                next_trajectory_item.trajectory['memory_before']['memory'] = memory_copy
+
+        stats = {}
+        if len(memory_diffs) > 0:
+            stats = pytree.update(stats, {
+                'avg_memory_update_diff_sqr': np.mean(memory_diffs)
+            })
+        return stats
 
     def _compute_mcts_statistics(
             self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
