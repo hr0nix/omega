@@ -214,7 +214,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             self, params, observation_trajectory, memory_trajectory,
             train_state, deterministic, rng):
         """
-        Recurrently unrolls the representation function forwards to embed the given observation trajectory.
+        Recurrently unrolls the representation function forwards starting from the initial memory state
+        to embed the given observation trajectory.
         """
         initial_memory_state_fn = train_state.initial_memory_state_fn
         representation_fn = functools.partial(train_state.representation_fn, deterministic=deterministic)
@@ -370,13 +371,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         # Choose actions to execute in the environment
         selected_actions = jax.random.categorical(action_key, mcts_policy_log_probs)
 
-        metadata = {
+        act_metadata = {
             'memory_state_after': updated_memory,
             'log_mcts_action_probs': mcts_policy_log_probs,
             'mcts_state_values': mcts_value,
         }
 
-        return selected_actions, metadata
+        return selected_actions, act_metadata
 
     def _train(self, training_batch):
         self._train_state, train_stats, per_trajectory_loss_details = self._train_jit(

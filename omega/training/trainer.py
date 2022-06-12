@@ -40,7 +40,8 @@ class Trainer(abc.ABC):
 
         for step in range(self.num_collection_steps):
             current_state_batch_cpu = self._batched_env_stepper.get_current_state()
-            action_batch_gpu, metadata_batch_gpu = self.agent.act_on_batch(current_state_batch_cpu, self._agent_memory)
+            action_batch_gpu, act_metadata_batch_gpu = self.agent.act_on_batch(
+                current_state_batch_cpu, self._agent_memory)
             # Copy actions back to CPU because indexing GPU memory will slow everything down significantly
             action_batch_cpu = pytree.to_cpu(action_batch_gpu)
             reward_done_next_state_batch_cpu = self._batched_env_stepper.step(action_batch_cpu)
@@ -64,15 +65,14 @@ class Trainer(abc.ABC):
                     memory_before=self._agent_memory,
                     current_state=current_state_batch_cpu,
                     actions=action_batch_gpu,
-                    # TODO: rename "metadata" into "act_metadata" for clarity
-                    metadata=metadata_batch_gpu,
+                    act_metadata=act_metadata_batch_gpu,
                     **reward_done_next_state_batch_cpu,
                 )
             )
 
             self._agent_memory = self.agent.update_memory_batch(
                 prev_memory=self._agent_memory,
-                new_memory_state=metadata_batch_gpu['memory_state_after'],
+                new_memory_state=act_metadata_batch_gpu['memory_state_after'],
                 actions=action_batch_gpu,
                 done=reward_done_next_state_batch_gpu['done'],
             )

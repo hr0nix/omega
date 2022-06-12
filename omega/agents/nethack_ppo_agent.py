@@ -130,7 +130,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             current_state=observation_batch,
             next_state=observation_batch,  # Pass current state as the next state, inverse dynamics is irrelevant here
             deterministic=True, rng=subkey1)
-        metadata = {
+        act_metadata = {
             'log_action_probs': log_action_probs,
             'state_values': state_values,
         }
@@ -140,11 +140,11 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             rng, subkey = jax.random.split(rng)
             rnd_loss = rnd_train_state.apply_fn(
                 rnd_train_state.params, observation_batch, deterministic=True, rng=subkey)
-            metadata = pytree.update(metadata, {
+            act_metadata = pytree.update(act_metadata, {
                 'rnd_loss': rnd_loss,
             })
 
-        return selected_actions, metadata
+        return selected_actions, act_metadata
 
     def _train_on_minibatch(self, train_state, rnd_train_state, trajectory_minibatch, rng):
         grad_key, rnd_grad_key = jax.random.split(rng)
@@ -157,7 +157,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             minibatch_range = jnp.arange(0, log_action_probs.shape[0])
 
             log_sampled_action_probs = log_action_probs[minibatch_range, trajectory_minibatch['actions']]
-            log_sampled_prev_action_probs = trajectory_minibatch['metadata']['log_action_probs'][
+            log_sampled_prev_action_probs = trajectory_minibatch['act_metadata']['log_action_probs'][
                 minibatch_range, trajectory_minibatch['actions']]
             action_prob_ratio = jnp.exp(log_sampled_action_probs - log_sampled_prev_action_probs)
             actor_loss_1 = -action_prob_ratio * trajectory_minibatch['advantage']
@@ -234,13 +234,13 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         rewards = trajectory_batch['rewards'][:, :-1]
         if self._config['use_rnd']:
             # Taking RND loss aka surprise at the NEXT state as the exploration reward
-            exploration_rewards = trajectory_batch['metadata']['rnd_loss'][:, 1:]
+            exploration_rewards = trajectory_batch['act_metadata']['rnd_loss'][:, 1:]
             # TODO: don't take episode end into accounts for extrinsic rewards (that would require a separate value head)
             rewards += self._config['exploration_reward_scale'] * exploration_rewards
 
         advantage = per_batch_advantage(
-            rewards, discounts, trajectory_batch['metadata']['state_values'])
-        value_targets = advantage + trajectory_batch['metadata']['state_values'][:, :-1]
+            rewards, discounts, trajectory_batch['act_metadata']['state_values'])
+        value_targets = advantage + trajectory_batch['act_metadata']['state_values'][:, :-1]
 
         if self._config['normalize_advantage']:
             advantage = (advantage - jnp.mean(advantage)) / (jnp.std(advantage) + 1e-9)
@@ -267,11 +267,11 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             return jnp.sum(stats) / self._config['num_minibatches_per_train_step']
         train_stats_minibatch_avg = jax.tree_map(f=aggregate_minibatch_stats, tree=train_stats_per_minibatch)
         batch_stats = {
-            'state_value': jnp.mean(trajectory_batch['metadata']['state_values']),
+            'state_value': jnp.mean(trajectory_batch['act_metadata']['state_values']),
             'advantage': jnp.mean(trajectory_batch['advantage']),
             'value_target': jnp.mean(trajectory_batch['value_targets']),
             'policy_entropy': jnp.mean(
-                distributions.softmax().entropy(trajectory_batch['metadata']['log_action_probs']))
+                distributions.softmax().entropy(trajectory_batch['act_metadata']['log_action_probs']))
         }
         return pytree.update(batch_stats, train_stats_minibatch_avg)
 
