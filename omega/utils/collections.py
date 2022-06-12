@@ -3,17 +3,6 @@ import abc
 import numpy as np
 
 
-class IdentityHashWrapper(object):
-    def __init__(self, val):
-        self.val = val
-
-    def __eq__(self, other):
-        return self.val is other.val
-
-    def __hash__(self):
-        return hash(id(self.val))
-
-
 def get_dict_slice(d, keys):
     result = {}
     for key in keys:

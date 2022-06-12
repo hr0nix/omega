@@ -239,11 +239,10 @@ def mcts(
 
     root_mcts_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
     root_mcts_value = get_state_value(tree=updated_tree, node_index=0)
-    root_predicted_value = tree['predicted_value'][0]
 
     stats = {
         'mcts_search_depth': max_depth,
     }
 
-    return root_mcts_policy_log_probs, root_mcts_value, root_predicted_value, stats
+    return root_mcts_policy_log_probs, root_mcts_value, stats
 

@@ -1,4 +1,4 @@
-from omega.utils.collections import LinearPrioritizedSampler, IdentityHashWrapper
+from omega.utils.collections import LinearPrioritizedSampler
 
 
 def assert_sampling_probs(sampler, expected_item_to_prob, num_samples=10000, eps=1e-2):
@@ -68,26 +68,3 @@ def test_linear_sampler_update():
 
     sampler.update_priority('1', 2.0)
     assert_sampling_probs(sampler, {'1': 2.0 / 9.0, '2': 4.0 / 9.0, '3': 3.0 / 9.0})
-
-
-def test_identity_hash_wrapper():
-    container = set()
-
-    a = dict()
-    b = dict()
-
-    aw = IdentityHashWrapper(a)
-    container.add(aw)
-    assert aw in container
-    assert IdentityHashWrapper(a) in container
-    assert IdentityHashWrapper(b) not in container
-
-    container.add(IdentityHashWrapper(b))
-    assert aw in container
-    assert IdentityHashWrapper(a) in container
-    assert IdentityHashWrapper(b) in container
-
-    container.remove(aw)
-    assert aw not in container
-    assert IdentityHashWrapper(a) not in container
-    assert IdentityHashWrapper(b) in container

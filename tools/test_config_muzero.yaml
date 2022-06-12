@@ -15,6 +15,7 @@ train_config:
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
+  update_next_trajectory_memory: true
   lr: 0.001
   discount_factor: 0.999
   num_train_steps: 1

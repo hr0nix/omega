@@ -2,8 +2,11 @@ import functools
 
 from functools import partial
 from typing import Callable
+from dataclasses import dataclass
 
 from absl import logging
+
+import numpy as np
 
 import flax.struct
 import flax.training.train_state
@@ -49,6 +52,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_priority_weight': 1.0,
         'initial_priority': 1.0,
         'use_priorities': False,
+        'update_next_trajectory_memory': False,
     })
 
     class TrainState(flax.training.train_state.TrainState):
@@ -57,6 +61,11 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         dynamics_fn: Callable = flax.struct.field(pytree_node=False)
         prediction_fn: Callable = flax.struct.field(pytree_node=False)
         step_index: int = 0
+
+    @dataclass(eq=True, frozen=True)
+    class TrajectoryId(object):
+        env_index: int
+        step: int
 
     def __init__(self, *args, model_factory=NethackPerceiverMuZeroModel, replay_buffer, config=None, **kwargs):
         super(NethackMuZeroAgent, self).__init__(*args, **kwargs)
@@ -151,15 +160,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
         self._add_to_replay_buffer(trajectory_batch, self._current_train_step)
-        self._current_train_step += 1
 
         stats_per_train_step = []
         for train_step in range(self._config['num_train_steps']):
-            training_batch, reanalyse_stats, original_batch_elements = self._make_next_training_batch()
+            training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
             training_stats, per_trajectory_loss_details = self._train(training_batch)
             if self._config['use_priorities']:
-                self._update_replay_buffer_priorities(original_batch_elements, per_trajectory_loss_details)
+                self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
+            if self._config['update_next_trajectory_memory']:
+                self._update_next_trajectory_memory(batch_items, training_batch['mcts_reanalyze']['memory_state_after'])
             stats_per_train_step.append(pytree.update(reanalyse_stats, training_stats))
+
+        self._current_train_step += 1
 
         stats = pytree.array_mean(stats_per_train_step, result_device='cpu')
         return stats
@@ -241,20 +253,40 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
         trajectory_batch = pytree.to_cpu(trajectory_batch)
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
-        for trajectory_idx in range(batch_size):
-            trajectory = pytree.slice_from_batch(trajectory_batch, trajectory_idx)
+        for env_idx in range(batch_size):
+            trajectory = pytree.slice_from_batch(trajectory_batch, env_idx)
             priority = self._config['initial_priority'] if self._config['use_priorities'] else None
-            self._replay_buffer.add_trajectory(trajectory, priority, current_train_step)
+            self._replay_buffer.add_trajectory(
+                trajectory_id=self.TrajectoryId(env_index=env_idx, step=current_train_step),
+                trajectory=trajectory,
+                priority=priority,
+                current_step=current_train_step
+            )
 
-    def _update_replay_buffer_priorities(self, replayed_trajectories, trajectory_loss_details):
+    def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
         reward_loss = pytree.to_cpu(trajectory_loss_details['reward_loss'])
         value_loss = pytree.to_cpu(trajectory_loss_details['value_loss'])
         priorities = (
             self._config['reward_loss_priority_weight'] * reward_loss +
             self._config['value_loss_priority_weight'] * value_loss
         )
-        for i in range(len(replayed_trajectories)):
-            self._replay_buffer.update_priority(replayed_trajectories[i], priorities[i])
+        for index, item in enumerate(replayed_items):
+            self._replay_buffer.update_priority(item.id, priorities[index])
+
+    def _update_next_trajectory_memory(self, replayed_items, next_trajectory_memory):
+        next_trajectory_memory_cpu = pytree.to_cpu(next_trajectory_memory)
+
+        for index, item in enumerate(replayed_items):
+            next_trajectory_id = self.TrajectoryId(env_index=item.id.env_index, step=item.id.step + 1)
+            next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
+            if next_trajectory_item is None:
+                # This is the most fresh trajectory
+                assert item.id.step == self._current_train_step
+                continue
+            # TODO: it's not nice to mix numpy and jax arrays, switch to using jax on CPU as well
+            memory_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            memory_copy[0] = next_trajectory_memory_cpu[index][-1]
+            next_trajectory_item.trajectory['memory_before']['memory'] = memory_copy
 
     def _compute_mcts_statistics(
             self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
@@ -291,10 +323,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         trajectory_mcts = jax.vmap(mcts_func)
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
         mcts_key_batch = jax.random.split(mcts_key, batch_size * num_timestamps).reshape(batch_size, num_timestamps, 2)
-        mcts_policy_log_probs, mcts_value, predicted_value, mcts_stats = trajectory_batch_mcts(
+        mcts_policy_log_probs, mcts_value, mcts_stats = trajectory_batch_mcts(
             latent_state_trajectory_batch, mcts_key_batch)
 
-        return updated_memory_trajectory_batch, mcts_policy_log_probs, mcts_value, predicted_value, mcts_stats
+        return updated_memory_trajectory_batch, mcts_policy_log_probs, mcts_value, mcts_stats
 
     @partial(jax.jit, static_argnums=(0,))
     def _act_on_batch_jit(self, observation_batch, memory_batch, train_state, rng):
@@ -304,14 +336,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1, result_device='gpu')
         memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1, result_device='gpu')
 
-        updated_memory, mcts_policy_log_probs, mcts_value, predicted_value, _ = self._compute_mcts_statistics(
+        updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
             observation_trajectory_batch, memory_trajectory_batch,
             train_state, self._config['act_deterministic'], mcts_stats_key)
 
         # Get rid of the fake timestamp dimension that we've added before
         mcts_policy_log_probs = pytree.squeeze(mcts_policy_log_probs, axis=1)
         mcts_value = pytree.squeeze(mcts_value, axis=1)
-        predicted_value = pytree.squeeze(predicted_value, axis=1)
         updated_memory = pytree.squeeze(updated_memory, axis=1)
 
         # Choose actions to execute in the environment
@@ -321,7 +352,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'memory_state_after': updated_memory,
             'log_mcts_action_probs': mcts_policy_log_probs,
             'mcts_state_values': mcts_value,
-            'predicted_state_values': predicted_value,
         }
 
         return selected_actions, metadata
@@ -454,13 +484,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     # TODO: for some reason total execution time of this function
     # TODO: is 200 ms more than _make_next_training_batch_jit + sample_trajectory_batch
     def _make_next_training_batch(self):
-        trajectory_batch_elements = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
-        trajectory_batch = pytree.stack(trajectory_batch_elements, axis=0)
+        trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
+        trajectory_batch = pytree.stack([item.trajectory for item in trajectory_batch_items], axis=0)
 
         training_batch, reanalyse_stats = self._make_next_training_batch_jit(
             self._train_state, trajectory_batch, self.next_random_key())
 
-        return training_batch, reanalyse_stats, trajectory_batch_elements
+        return training_batch, reanalyse_stats, trajectory_batch_items
 
     @partial(jax.jit, static_argnums=(0,))
     def _make_next_training_batch_jit(self, train_state, trajectory_batch, rng):
@@ -470,15 +500,15 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _reanalyze(self, train_state, trajectory_batch, rng):
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
-        _, mcts_policy_log_probs, mcts_values, predicted_values, mcts_stats = self._compute_mcts_statistics(
+        updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
             trajectory_batch['current_state'], trajectory_batch['memory_before'],
             train_state, self._config['reanalyze_deterministic'], rng)
         trajectory_batch = pytree.update(trajectory_batch, {
             'mcts_reanalyze': {
                 'log_action_probs': mcts_policy_log_probs,
                 'state_values': mcts_values,
-                'predicted_state_values': predicted_values,
-            }
+                'memory_state_after': updated_memory,
+            },
         })
         reanalyze_stats = {
             'reanalyze_avg_msts_policy_entropy': jnp.mean(
