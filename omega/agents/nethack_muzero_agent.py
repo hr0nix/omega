@@ -297,12 +297,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 # has been evicted (this can happen when using clustered replay buffers).
                 continue
 
-            target_memory_state_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
-            diff_sqr = np.mean((target_memory_state_copy[0] - updated_memory_state_np[index, -1]) ** 2)
+            target_memory_state_trajectory_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            diff_sqr = np.mean((target_memory_state_trajectory_copy[0] - updated_memory_state_np[index]) ** 2)
             memory_diff_sqr_per_trajectory.append(diff_sqr)
-            target_memory_state_copy[0] = updated_memory_state_np[index, -1]
+            target_memory_state_trajectory_copy[0] = updated_memory_state_np[index]
             if self._config['update_next_trajectory_memory']:
-                next_trajectory_item.trajectory['memory_before']['memory'] = target_memory_state_copy
+                next_trajectory_item.trajectory['memory_before']['memory'] = target_memory_state_trajectory_copy
 
         stats = {}
         if len(memory_diff_sqr_per_trajectory) > 0:
