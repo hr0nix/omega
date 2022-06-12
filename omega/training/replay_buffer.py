@@ -87,7 +87,7 @@ class FIFOReplayBuffer(ReplayBuffer):
         if priority is not None:
             raise ValueError('Priorities are not supported with this replay buffer type')
 
-        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        trajectory = pytree.to_numpy(trajectory)  # Avoid wasting GPU memory for replay buffer
         self._buffer.add(ReplayBufferItem(id=trajectory_id, trajectory=trajectory))
 
     def find_trajectory(self, trajectory_id):
@@ -132,7 +132,7 @@ class MaxAgeReplayBuffer(ReplayBuffer):
 
         self._try_evict(current_step)
 
-        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        trajectory = pytree.to_numpy(trajectory)  # Avoid wasting GPU memory for replay buffer
         self._buffer.add(self._ReplayBufferItem(id=trajectory_id, trajectory=trajectory, add_step=current_step))
 
     def find_trajectory(self, trajectory_id):
@@ -176,7 +176,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._validate_priority(priority)
 
         self._try_evict()
-        trajectory = pytree.to_cpu(trajectory)  # Avoid wasting GPU memory for replay buffer
+        trajectory = pytree.to_numpy(trajectory)  # Avoid wasting GPU memory for replay buffer
         item = ReplayBufferItem(id=trajectory_id, trajectory=trajectory)
         self._buffer.add(item)
         self._sampler.add(item, priority)

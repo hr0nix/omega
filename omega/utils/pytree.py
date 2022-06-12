@@ -6,23 +6,23 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def _select_op(pytree, result_device, cpu_op, gpu_op):
-    if result_device == 'cpu':
-        return cpu_op
-    elif result_device == 'gpu':
-        return gpu_op
-    elif result_device is not None:
-        raise ValueError(f'Unknown device: {result_device}')
+def _select_op(pytree, result_backend, numpy_op, jax_op):
+    if result_backend == 'numpy':
+        return numpy_op
+    elif result_backend == 'jax':
+        return jax_op
+    elif result_backend is not None:
+        raise ValueError(f'Unknown backend: {result_backend}')
 
-    if is_cpu(pytree):
-        return cpu_op
-    elif is_gpu(pytree):
-        return gpu_op
+    if is_numpy(pytree):
+        return numpy_op
+    elif is_jax(pytree):
+        return jax_op
     else:
-        raise ValueError(f'Given pytree has a mix of CPU and GPU tensors, specify result_device explicitly')
+        raise ValueError(f'Given pytree has a mix of JAX and numpy tensors, specify result_backend explicitly')
 
 
-def copy(pytree):
+def copy_structure(pytree):
     return jax.tree_map(lambda x: x, pytree)
 
 
@@ -30,29 +30,29 @@ def update(pytree, *updates):
     if not isinstance(pytree, dict):
         raise ValueError('Top-level node must be a dict!')
 
-    result = copy(pytree)
+    result = copy_structure(pytree)
     for update in updates:
         result.update(update)
     return result
 
 
-def expand_dims(pytree, axis, result_device=None):
-    expand_dims_op = _select_op(pytree, result_device, np.expand_dims, jnp.expand_dims)
+def expand_dims(pytree, axis, result_backend=None):
+    expand_dims_op = _select_op(pytree, result_backend, np.expand_dims, jnp.expand_dims)
     return jax.tree_map(lambda t: expand_dims_op(t, axis=axis), pytree)
 
 
-def squeeze(pytree, axis, result_device=None):
-    squeeze_op = _select_op(pytree, result_device, np.squeeze, jnp.squeeze)
+def squeeze(pytree, axis, result_backend=None):
+    squeeze_op = _select_op(pytree, result_backend, np.squeeze, jnp.squeeze)
     return jax.tree_map(lambda t: squeeze_op(t, axis=axis), pytree)
 
 
-def mean(pytree, result_device=None):
-    mean_op = _select_op(pytree, result_device, np.mean, jnp.mean)
+def mean(pytree, result_backend=None):
+    mean_op = _select_op(pytree, result_backend, np.mean, jnp.mean)
     return jax.tree_map(lambda t: mean_op(t), pytree)
 
 
-def array_mean(pytrees, result_device=None):
-    add_op = _select_op(pytrees, result_device, np.add, jnp.add)
+def array_mean(pytrees, result_backend=None):
+    add_op = _select_op(pytrees, result_backend, np.add, jnp.add)
     return jax.tree_map(lambda *t: functools.reduce(add_op, t) / len(t), *pytrees)
 
 
@@ -72,33 +72,33 @@ def timestamp_dim_slice(batch, slice_idx):
     return jax.tree_map(lambda t: t[:, slice_idx, ...], batch)
 
 
-def stack(pytrees, axis, result_device=None):
-    stack_op = _select_op(pytrees[0], result_device, np.stack, jnp.stack)
+def stack(pytrees, axis, result_backend=None):
+    stack_op = _select_op(pytrees[0], result_backend, np.stack, jnp.stack)
     return jax.tree_map(
         lambda *leaves: stack_op(leaves, axis=axis),
         *pytrees,
     )
 
 
-def concatenate(pytrees, axis, result_device=None):
-    concatenate_op = _select_op(pytrees, result_device, np.concatenate, jnp.concatenate)
+def concatenate(pytrees, axis, result_backend=None):
+    concatenate_op = _select_op(pytrees, result_backend, np.concatenate, jnp.concatenate)
     return jax.tree_map(
         lambda *leaves: concatenate_op(leaves, axis=axis),
         *pytrees,
     )
 
 
-def to_cpu(pytree):
+def to_numpy(pytree):
     return jax.tree_map(lambda t: np.asarray(t), pytree)
 
 
-def to_gpu(pytree):
+def to_jax(pytree):
     return jax.tree_map(lambda t: jnp.asarray(t), pytree)
 
 
-def is_cpu(pytree):
+def is_numpy(pytree):
     return all(isinstance(l, np.ndarray) for l in jax.tree_leaves(pytree))
 
 
-def is_gpu(pytree):
+def is_jax(pytree):
     return all(isinstance(l, jnp.ndarray) for l in jax.tree_leaves(pytree))

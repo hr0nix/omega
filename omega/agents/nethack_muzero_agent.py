@@ -177,7 +177,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         self._current_train_step += 1
 
-        stats = pytree.array_mean(stats_per_train_step, result_device='cpu')
+        stats = pytree.array_mean(stats_per_train_step, result_backend='numpy')
         return stats
 
     def act_on_batch(self, observation_batch, memory_batch):
@@ -256,7 +256,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _add_to_replay_buffer(self, trajectory_batch, current_train_step):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
-        trajectory_batch = pytree.to_cpu(trajectory_batch)
+        trajectory_batch = pytree.to_numpy(trajectory_batch)
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
         for env_idx in range(batch_size):
             trajectory = pytree.batch_dim_slice(trajectory_batch, env_idx)
@@ -269,8 +269,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             )
 
     def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
-        reward_loss = pytree.to_cpu(trajectory_loss_details['reward_loss'])
-        value_loss = pytree.to_cpu(trajectory_loss_details['value_loss'])
+        reward_loss = pytree.to_numpy(trajectory_loss_details['reward_loss'])
+        value_loss = pytree.to_numpy(trajectory_loss_details['value_loss'])
         priorities = (
             self._config['reward_loss_priority_weight'] * reward_loss +
             self._config['value_loss_priority_weight'] * value_loss
@@ -286,28 +286,28 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
             pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
         )
-        updated_memory_state_cpu = pytree.to_cpu(updated_memory['memory'])
+        updated_memory_state_np = pytree.to_numpy(updated_memory['memory'])
 
-        memory_diffs = []
+        memory_diff_sqr_per_trajectory = []
         for index, item in enumerate(replayed_items):
             next_trajectory_id = self.TrajectoryId(env_index=item.id.env_index, step=item.id.step + 1)
             next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
             if next_trajectory_item is None:
-                # This is the most fresh trajectory
-                assert item.id.step == self._current_train_step
+                # Either this is the most fresh trajectory, or the next trajectory
+                # has been evicted (this can happen when using clustered replay buffers).
                 continue
-            # TODO: it's not nice to mix numpy and jax arrays, switch to using jax on CPU as well
-            memory_state_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
-            diff_sqr = np.mean((memory_state_copy - updated_memory_state_cpu[index, -1]) ** 2)
-            memory_diffs.append(diff_sqr)
-            memory_state_copy[0] = updated_memory_state_cpu[index, -1]
+
+            target_memory_state_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            diff_sqr = np.mean((target_memory_state_copy[0] - updated_memory_state_np[index, -1]) ** 2)
+            memory_diff_sqr_per_trajectory.append(diff_sqr)
+            target_memory_state_copy[0] = updated_memory_state_np[index, -1]
             if self._config['update_next_trajectory_memory']:
-                next_trajectory_item.trajectory['memory_before']['memory'] = memory_state_copy
+                next_trajectory_item.trajectory['memory_before']['memory'] = target_memory_state_copy
 
         stats = {}
-        if len(memory_diffs) > 0:
+        if len(memory_diff_sqr_per_trajectory) > 0:
             stats = pytree.update(stats, {
-                'avg_memory_update_diff_sqr': np.mean(memory_diffs)
+                'avg_memory_update_diff_sqr': np.mean(memory_diff_sqr_per_trajectory)
             })
         return stats
 
@@ -356,8 +356,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         mcts_stats_key, action_key = jax.random.split(rng)
 
         # Add fake timestamp dim to make a rudimentary trajectory
-        observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1, result_device='gpu')
-        memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1, result_device='gpu')
+        observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1)
+        memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1)
 
         updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
             observation_trajectory_batch, memory_trajectory_batch,

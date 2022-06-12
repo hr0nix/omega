@@ -2,6 +2,7 @@ import abc
 from functools import partial
 
 import jax
+import numpy as np
 
 from ..training.batched_env_stepper import BatchedEnvStepper
 from ..utils import pytree
@@ -39,23 +40,24 @@ class Trainer(abc.ABC):
         transition_batches = []
 
         for step in range(self.num_collection_steps):
-            current_state_batch_cpu = self._batched_env_stepper.get_current_state()
-            action_batch_gpu, act_metadata_batch_gpu = self.agent.act_on_batch(
-                current_state_batch_cpu, self._agent_memory)
+            current_state_batch_np = self._batched_env_stepper.get_current_state()
+            action_batch_jax, act_metadata_batch_jax = self.agent.act_on_batch(
+                current_state_batch_np, self._agent_memory)
             # Copy actions back to CPU because indexing GPU memory will slow everything down significantly
-            action_batch_cpu = pytree.to_cpu(action_batch_gpu)
-            reward_done_next_state_batch_cpu = self._batched_env_stepper.step(action_batch_cpu)
-            reward_done_next_state_batch_gpu = pytree.to_gpu(reward_done_next_state_batch_cpu)
+            action_batch_np = pytree.to_numpy(action_batch_jax)
+            reward_done_next_state_batch_np = self._batched_env_stepper.step(action_batch_np)
+            reward_done_next_state_batch_jax = pytree.to_jax(reward_done_next_state_batch_np)
 
             for env_index in range(self._num_envs):
                 if stats is not None:
                     stats.add_transition(
                         self._current_episode_indices[env_index],
-                        action_batch_cpu[env_index],
-                        reward_done_next_state_batch_cpu['rewards'][env_index],
-                        reward_done_next_state_batch_cpu['done'][env_index])
+                        np.asscalar(action_batch_np[env_index]),
+                        np.asscalar(reward_done_next_state_batch_np['rewards'][env_index]),
+                        np.asscalar(reward_done_next_state_batch_np['done'][env_index]),
+                    )
 
-                if reward_done_next_state_batch_cpu['done'][env_index]:
+                if reward_done_next_state_batch_np['done'][env_index]:
                     # Allocate a new episode index for stats accumulation
                     self._current_episode_indices[env_index] = self._next_episode_index
                     self._next_episode_index += 1
@@ -63,18 +65,18 @@ class Trainer(abc.ABC):
             transition_batches.append(
                 dict(
                     memory_before=self._agent_memory,
-                    current_state=current_state_batch_cpu,
-                    actions=action_batch_gpu,
-                    act_metadata=act_metadata_batch_gpu,
-                    **reward_done_next_state_batch_cpu,
+                    current_state=current_state_batch_np,
+                    actions=action_batch_jax,
+                    act_metadata=act_metadata_batch_jax,
+                    **reward_done_next_state_batch_jax,
                 )
             )
 
             self._agent_memory = self.agent.update_memory_batch(
                 prev_memory=self._agent_memory,
-                new_memory_state=act_metadata_batch_gpu['memory_state_after'],
-                actions=action_batch_gpu,
-                done=reward_done_next_state_batch_gpu['done'],
+                new_memory_state=act_metadata_batch_jax['memory_state_after'],
+                actions=action_batch_jax,
+                done=reward_done_next_state_batch_jax['done'],
             )
 
         return self._stack_transition_batches(transition_batches)
@@ -82,7 +84,7 @@ class Trainer(abc.ABC):
     @partial(jax.jit, static_argnums=(0,))
     def _stack_transition_batches(self, transition_batches):
         # Stack along timestamp dimension, return as GPU tensors
-        return pytree.stack(transition_batches, axis=1, result_device='gpu')
+        return pytree.stack(transition_batches, axis=1, result_backend='jax')
 
     @abc.abstractmethod
     def _run_night(self, stats, collected_trajectories):

@@ -36,7 +36,7 @@ def get_normalized_value(tree, value):
 
 def update_value_normalization(tree, value):
     min_max_not_initialized = jnp.allclose(tree['min_max_value'], 0.0)
-    tree = pytree.copy(tree)
+    tree = pytree.copy_structure(tree)
     tree['min_max_value'] = jax.lax.cond(
         pred=min_max_not_initialized,
         true_fun=lambda _: jnp.ones(2, dtype=jnp.float32) * value,
