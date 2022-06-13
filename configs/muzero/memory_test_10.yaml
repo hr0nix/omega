@@ -4,7 +4,7 @@ train_config:
   num_collection_steps: 16
   num_workers: 2
   num_envs: 32
-  env_name: 'MiniHack-Memento-Short-F2-v0'
+  env_name: 'MiniHack-MemoryTest-10-v0'
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -33,7 +33,7 @@ agent_config:
   model_config:
     state_encoder_config:
       glyph_crop_start: [0, 0]
-      glyph_crop_size: [13, 20]
+      glyph_crop_size: [21, 20]
       glyph_embedding_dim: 32
       num_memory_units: 8
       memory_dim: 32
