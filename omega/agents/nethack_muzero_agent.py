@@ -18,7 +18,6 @@ import jax.experimental.host_callback
 import optax
 import rlax
 
-from ..neural.optimization import clip_gradient_by_norm
 from ..math import entropy, discretize_onehot, undiscretize_expected
 from ..utils import pytree
 from ..utils.flax import merge_params
@@ -31,6 +30,7 @@ from .trainable_agent import JaxTrainableAgentBase
 class NethackMuZeroAgent(JaxTrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'lr': 1e-3,
+        'num_lr_warmup_steps': 0,
         'discount_factor': 0.99,
         'model_config': {},
         'num_mcts_simulations': 30,
@@ -44,7 +44,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'value_loss_weight': 1.0,
         'reward_loss_weight': 1.0,
         'state_similarity_loss_weight': 1.0,
-        'max_gradient_norm': 100000.0,
+        'max_gradient_norm': 1000.0,
         'act_deterministic': False,
         'reanalyze_deterministic': False,
         'train_deterministic': False,
@@ -104,16 +104,31 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         # Merge params from different initializations, some values will be overridden
         model_params = merge_params(initial_memory_params, representation_params, dynamics_params, prediction_params)
 
-        optimizer = optax.adam(learning_rate=self._config['lr'])
-
         self._train_state = self.TrainState.create(
-            params=model_params, tx=optimizer,
+            params=model_params, tx=self._make_optimizer(),
             apply_fn=self._model.apply,
             initial_memory_state_fn=functools.partial(self._model.apply, method=self._model.initial_memory_state),
             representation_fn=functools.partial(self._model.apply, method=self._model.representation),
             dynamics_fn=functools.partial(self._model.apply, method=self._model.dynamics),
             prediction_fn=functools.partial(self._model.apply, method=self._model.prediction),
         )
+
+    def _make_optimizer(self):
+        lr_schedules = [
+            optax.linear_schedule(
+                init_value=0.0,
+                end_value=self._config['lr'],
+                transition_steps=self._config['num_lr_warmup_steps'],
+            ),
+            optax.constant_schedule(self._config['lr']),
+        ]
+        lr_schedule = optax.join_schedules(lr_schedules, [self._config['num_lr_warmup_steps']])
+
+        return optax.chain(
+            optax.clip_by_global_norm(self._config['max_gradient_norm']),
+            optax.adamw(learning_rate=lr_schedule),
+        )
+
 
     def _make_fake_observation(self):
         return {
@@ -496,13 +511,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         rng, grad_key = jax.random.split(rng)
         grad_and_loss_details_func = jax.grad(loss_function, argnums=0, has_aux=True)
         grads, per_trajectory_loss_details = grad_and_loss_details_func(train_state.params, grad_key)
-        grads, grad_norm = clip_gradient_by_norm(grads, self._config['max_gradient_norm'], return_norm=True)
         train_state = train_state.apply_gradients(grads=grads)
 
         stats = pytree.mean(per_trajectory_loss_details)
-        stats = pytree.update(stats, {
-            'gradient_norm': grad_norm,
-        })
 
         return train_state, stats, per_trajectory_loss_details
 
