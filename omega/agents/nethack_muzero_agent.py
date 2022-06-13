@@ -159,7 +159,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def train_on_batch(self, trajectory_batch):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
-        self._add_to_replay_buffer(trajectory_batch, self._current_train_step)
+        self._add_to_replay_buffer(trajectory_batch)
 
         stats_per_train_step = []
         for train_step in range(self._config['num_train_steps']):
@@ -254,7 +254,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return latent_state_trajectory, updated_memory_trajectory
 
-    def _add_to_replay_buffer(self, trajectory_batch, current_train_step):
+    def _add_to_replay_buffer(self, trajectory_batch):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
         trajectory_batch = pytree.to_numpy(trajectory_batch)
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
@@ -262,10 +262,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             trajectory = pytree.batch_dim_slice(trajectory_batch, env_idx)
             priority = self._config['initial_priority'] if self._config['use_priorities'] else None
             self._replay_buffer.add_trajectory(
-                trajectory_id=self.TrajectoryId(env_index=env_idx, step=current_train_step),
+                trajectory_id=self.TrajectoryId(env_index=env_idx, step=self._current_train_step),
                 trajectory=trajectory,
                 priority=priority,
-                current_step=current_train_step
+                current_step=self._current_train_step
             )
 
     def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
@@ -280,29 +280,31 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _maybe_update_next_trajectory_memory(self, replayed_items, training_batch):
         # Make sure terminal states are taken into account when updating memory
-        updated_memory = self.update_memory_batch(
+        updated_memory_after_last_ts_batch = self.update_memory_batch(
             pytree.timestamp_dim_slice(training_batch['memory_before'], slice_idx=-1),
             pytree.timestamp_dim_slice(training_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
             pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
             pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
         )
-        updated_memory_state_np = pytree.to_numpy(updated_memory['memory'])
+        updated_memory_state_after_last_ts_batch = pytree.to_numpy(updated_memory_after_last_ts_batch['memory'])
 
         memory_diff_sqr_per_trajectory = []
-        for index, item in enumerate(replayed_items):
-            next_trajectory_id = self.TrajectoryId(env_index=item.id.env_index, step=item.id.step + 1)
+        for batch_index, trajectory_item in enumerate(replayed_items):
+            next_trajectory_id = self.TrajectoryId(
+                env_index=trajectory_item.id.env_index, step=trajectory_item.id.step + 1)
             next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
             if next_trajectory_item is None:
                 # Either this is the most fresh trajectory, or the next trajectory
                 # has been evicted (this can happen when using clustered replay buffers).
                 continue
 
-            target_memory_state_trajectory_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
-            diff_sqr = np.mean((target_memory_state_trajectory_copy[0] - updated_memory_state_np[index]) ** 2)
-            memory_diff_sqr_per_trajectory.append(diff_sqr)
-            target_memory_state_trajectory_copy[0] = updated_memory_state_np[index]
+            next_trajectory_memory_before_copy = next_trajectory_item.trajectory['memory_before']['memory'].copy()
+            memory_diff_sqr = np.mean(
+                (next_trajectory_memory_before_copy[0] - updated_memory_state_after_last_ts_batch[batch_index]) ** 2)
+            memory_diff_sqr_per_trajectory.append(memory_diff_sqr)
+            next_trajectory_memory_before_copy[0] = updated_memory_state_after_last_ts_batch[batch_index]
             if self._config['update_next_trajectory_memory']:
-                next_trajectory_item.trajectory['memory_before']['memory'] = target_memory_state_trajectory_copy
+                next_trajectory_item.trajectory['memory_before']['memory'] = next_trajectory_memory_before_copy
 
         stats = {}
         if len(memory_diff_sqr_per_trajectory) > 0:
