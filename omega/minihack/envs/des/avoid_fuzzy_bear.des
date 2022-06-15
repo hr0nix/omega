@@ -1,0 +1,17 @@
+MAZE: "mylevel",' '
+INIT_MAP:solidfill,' '
+GEOMETRY:left,top
+MAP
+------|
+|.....|
+|.....|
+|.....|
+----------
+ENDMAP
+REGION:(0,0,20,20),lit,"ordinary"
+IF [50%] {
+    TRAP:"pit", (5,3)
+} ELSE {
+    TRAP:"board", (5,3)
+}
+BRANCH:(1,2,1,2),(2,2,2,2)
