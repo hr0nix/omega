@@ -6,6 +6,7 @@ train_config:
   num_envs: 32
   env_name: 'MiniHack-Room-Random-5x5-v0'
   observation_keys: ['glyphs']
+  agent_type: 'muzero'
   replay_buffer:
     type: uniform_over_good_and_bad
     cluster_buffer:

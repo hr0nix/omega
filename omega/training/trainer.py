@@ -74,7 +74,7 @@ class Trainer(abc.ABC):
 
             self._agent_memory = self.agent.update_memory_batch(
                 prev_memory=self._agent_memory,
-                new_memory_state=act_metadata_batch_jax['memory_state_after'],
+                new_memory_state=act_metadata_batch_jax.get('memory_state_after'),
                 actions=action_batch_jax,
                 done=reward_done_next_state_batch_jax['done'],
             )

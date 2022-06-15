@@ -9,7 +9,7 @@ import wandb
 from absl import logging
 logging.set_verbosity(logging.INFO)
 
-from omega.agents import NethackMuZeroAgent
+from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
 from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
@@ -33,6 +33,26 @@ def load_config(filename):
         return yaml.safe_load(f)
 
 
+def create_agent(config, env):
+    agent_type = config['train_config']['agent_type']
+    if agent_type == 'muzero':
+        replay_buffer = create_replay_buffer_from_config(config['train_config']['replay_buffer'])
+        return NethackMuZeroAgent(
+            replay_buffer=replay_buffer,
+            observation_space=env.observation_space,
+            action_space=env.action_space,
+            config=config['agent_config']
+        )
+    elif agent_type == 'ppo':
+        return NethackPPOAgent(
+            observation_space=env.observation_space,
+            action_space=env.action_space,
+            config=config['agent_config']
+        )
+    else:
+        raise ValueError(f'Unknown agent type: {agent_type}')
+
+
 def train_agent(args):
     config = load_config(args.config)
     train_config = config['train_config']
@@ -43,11 +63,7 @@ def train_agent(args):
 
     env_factory = lambda: make_env(train_config, episodes_dir=args.episodes)
     env = env_factory()
-    replay_buffer = create_replay_buffer_from_config(config['train_config']['replay_buffer'])
-    agent = NethackMuZeroAgent(
-        replay_buffer=replay_buffer,
-        observation_space=env.observation_space,
-        action_space=env.action_space, config=config['agent_config'])
+    agent = create_agent(config, env)
     trainer = OnPolicyTrainer(
         agent=agent,
         env_factory=env_factory,
@@ -74,15 +90,12 @@ def train_agent(args):
 
 
 def eval_agent(args):
-    config = load_config(args.train_config)
     ray.init(num_cpus=args.num_parallel_envs)
 
+    config = load_config(args.train_config)
     env_factory = lambda: make_env(config['train_config'], episodes_dir=args.episodes)
     env = env_factory()
-    agent = NethackMuZeroAgent(
-        replay_buffer=None,
-        observation_space=env.observation_space,
-        action_space=env.action_space, config=config['agent_config'])
+    agent = create_agent(config, env)
     trainer = DummyTrainer(
         agent=agent,
         env_factory=env_factory,
