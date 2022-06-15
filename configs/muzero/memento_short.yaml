@@ -29,7 +29,7 @@ agent_config:
   policy_loss_weight: 1.0
   value_loss_weight: 1.0
   reward_loss_weight: 40.0
-  state_similarity_loss_weight: 0.001
+  state_similarity_loss_weight: 0.0001
   model_config:
     state_encoder_config:
       glyph_crop_start: [0, 0]
