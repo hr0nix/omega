@@ -49,12 +49,6 @@ class EvaluationStats(object):
             self._rolling_stats[key].add(value)
 
     def add_transition(self, episode_index, action, reward, done):
-        # To handle JAX/numpy arrays which are not hashable
-        if isinstance(action, (jnp.ndarray, np.ndarray)):
-            if len(action.shape) > 0:
-                raise ValueError('Only scalar actions are currently supported')
-            action = np.asscalar(action)
-
         stats = self._running_episode_stats[episode_index]
         stats.actions.append(action)
         stats.rewards.append(reward)

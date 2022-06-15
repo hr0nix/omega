@@ -1,47 +1,50 @@
 train_config:
   num_days: 3
   epoch_every_num_days: 1
-  num_collection_steps: 4
+  num_collection_steps: 3
   num_envs: 1
   num_workers: 1
-  env_name: 'MiniHack-Room-Random-5x5-v0'
+  env_name: 'MiniHack-MemoryTest-6-v0'
   observation_keys: ['glyphs']
   replay_buffer:
     type: uniform_over_good_and_bad
     cluster_buffer:
-      type: uniform
-      buffer_size: 50000
+      type: max_age
+      max_buffer_size: 50000
+      max_age: 1
     good_total_reward_threshold: 0.5
 agent_config:
-  reset_memory_every_day: true
   use_priorities: false
+  update_next_trajectory_memory: true
   lr: 0.001
   discount_factor: 0.999
   num_train_steps: 1
   num_train_unroll_steps: 2
   reanalyze_batch_size: 1
   num_mcts_simulations: 2
-  reward_values: [-0.01, 0.0, 1.0]
+  reward_values: [-0.01, 0.0, -1.0, 1.0]
   model_config:
     state_encoder_config:
-      num_memory_units: 4
+      num_memory_units: 3
       memory_dim: 16
-      transformer_use_gating: true
       glyph_embedding_dim: 16
       use_fixed_positional_embeddings: false
       use_bl_stats: false
-      glyph_crop_area: [5, 5]
+      glyph_crop_size: [5, 5]
     scalar_predictor_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
-      transformer_use_gating: true
     policy_network_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
-      transformer_use_gating: true
     dynamics_transformer_config:
+      num_blocks: 1
+      num_heads: 1
+      fc_inner_dim: 16
+      use_gating: true
+    memory_aggregator_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16

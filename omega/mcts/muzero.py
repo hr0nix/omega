@@ -36,7 +36,7 @@ def get_normalized_value(tree, value):
 
 def update_value_normalization(tree, value):
     min_max_not_initialized = jnp.allclose(tree['min_max_value'], 0.0)
-    tree = pytree.copy(tree)
+    tree = pytree.copy_structure(tree)
     tree['min_max_value'] = jax.lax.cond(
         pred=min_max_not_initialized,
         true_fun=lambda _: jnp.ones(2, dtype=jnp.float32) * value,
@@ -239,11 +239,10 @@ def mcts(
 
     root_mcts_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
     root_mcts_value = get_state_value(tree=updated_tree, node_index=0)
-    root_predicted_value = tree['predicted_value'][0]
 
     stats = {
         'mcts_search_depth': max_depth,
     }
 
-    return root_mcts_policy_log_probs, root_mcts_value, root_predicted_value, stats
+    return root_mcts_policy_log_probs, root_mcts_value, stats
 

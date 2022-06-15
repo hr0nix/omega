@@ -8,7 +8,7 @@ class RandomAgent(Agent):
     def __init__(self, *args, **kwargs):
         super(RandomAgent, self).__init__(*args, **kwargs)
     
-    def act_on_batch(self, observation_batch):
+    def act_on_batch(self, observation_batch, memory):
         batch_size = pytree.get_axis_dim(observation_batch, axis=0)
         random_actions = np.random.randint(low=0, high=self.action_space.n, size=(batch_size,))
         return random_actions, {}

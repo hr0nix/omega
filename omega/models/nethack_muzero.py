@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random
 import chex
 
-from omega.neural import CrossTransformerNet
+from omega.neural import TransformerNet, CrossTransformerNet
 
 from ..utils import pytree
 from .nethack_state_encoder import PerceiverNethackStateEncoder
@@ -17,7 +17,13 @@ class NethackMuZeroModelBase(nn.Module):
     def latent_state_shape(self):
         raise NotImplementedError()
 
-    def representation(self, observations, rng, deterministic=None):
+    def memory_shape(self):
+        raise NotImplementedError()
+
+    def initial_memory_state(self):
+        raise NotImplementedError()
+
+    def representation(self, prev_memory, prev_action, observation, rng, deterministic=None):
         raise NotImplementedError()
 
     def dynamics(self, previous_latent_states, actions, rng, deterministic=None):
@@ -31,6 +37,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
     num_actions: int
     reward_dim: int
     state_encoder_config: Dict = field(default_factory=dict)
+    memory_aggregator_config: Dict = field(default_factory=lambda: {
+        'num_blocks': 2,
+        'num_heads': 4,
+        'fc_inner_dim': 256,
+    })
     dynamics_transformer_config: Dict = field(default_factory=lambda: {
         'num_blocks': 2,
         'num_heads': 4,
@@ -52,9 +63,17 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         self._state_encoder = PerceiverNethackStateEncoder(
             **self.state_encoder_config,
             name='state_encoder')
+        self._initial_memory_embedder = nn.Embed(
+            num_embeddings=self._state_encoder.num_memory_units, features=self._state_encoder.memory_dim,
+            name='initial_memory_embedder'
+        )
         self._action_embedder = nn.Embed(
             num_embeddings=self.num_actions, features=self._state_encoder.memory_dim,
             name='action_embedder')
+        self._memory_aggregator = CrossTransformerNet(
+            dim=self._state_encoder.memory_dim,
+            **self.memory_aggregator_config,
+            name='memory_aggregator')
         self._dynamics_transformer = CrossTransformerNet(
             dim=self._state_encoder.memory_dim,
             **self.dynamics_transformer_config,
@@ -75,20 +94,48 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
     def latent_state_shape(self):
         return self._state_encoder.num_memory_units, self._state_encoder.memory_dim
 
-    def representation(self, observation_trajectory, rng, deterministic=None):
+    def memory_shape(self):
+        return self._state_encoder.num_memory_units, self._state_encoder.memory_dim
+
+    def initial_memory_state(self):
+        memory_indices = jnp.arange(0, self._state_encoder.num_memory_units, dtype=jnp.int32)
+        return self._initial_memory_embedder(memory_indices)
+
+    def representation(self, prev_memory, prev_action, observation, rng, deterministic=None):
         """
-        Produces the representation of a trajectory of observations.
+        Produces the representation of an observation.
         """
-        chex.assert_rank(observation_trajectory['glyphs'], 3)  # timestamp, width, height
+        chex.assert_rank(observation['glyphs'], 2)  # rows, cols
         chex.assert_rank(rng, 1)
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        # TODO: augment with recurrence over observations, for now we just use latest observation
-        latent_trajectory =  self._state_encoder(observation_trajectory, deterministic=deterministic, rng=rng)
+        state_encoder_key, memory_aggregator_key = jax.random.split(rng, 2)
 
-        chex.assert_rank(latent_trajectory, 3)
-        return latent_trajectory
+        # TODO: rewrite layers so that they don't assume that the batch dimension is present
+        observation = pytree.expand_dims(observation, axis=0)
+        prev_memory = pytree.expand_dims(prev_memory, axis=0)
+        prev_action = pytree.expand_dims(prev_action, axis=0)
+
+        latent_observation = self._state_encoder(observation, deterministic=deterministic, rng=state_encoder_key)
+
+        # Fuse prev action embedding with prev memory
+        prev_action_embedding = self._action_embedder(prev_action)
+        prev_action_embedding = jnp.expand_dims(prev_action_embedding, axis=-2)
+        prev_memory_with_action = jnp.concatenate([prev_memory, prev_action_embedding], axis=-2)
+
+        # Attend from latent observation to prev memory
+        representation = self._memory_aggregator(
+            latent_observation, prev_memory_with_action, deterministic=deterministic, rng=memory_aggregator_key)
+
+        chex.assert_rank(representation, 3)
+        chex.assert_axis_dimension(representation, 0, 1)
+
+        # Get rid of the no longer needed batch dimension
+        representation = pytree.squeeze(representation, axis=0)
+
+        # Also return the representation as the updated memory value
+        return representation, representation
 
     def dynamics(self, previous_latent_state, action, rng, deterministic=None):
         """
