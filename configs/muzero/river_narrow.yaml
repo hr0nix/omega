@@ -10,8 +10,9 @@ train_config:
   replay_buffer:
     type: uniform_over_good_and_bad
     cluster_buffer:
-      type: fifo
-      buffer_size: 50000
+      type: max_age
+      max_buffer_size: 50000
+      max_age: 1000
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
@@ -26,8 +27,8 @@ agent_config:
   mcts_root_exploration_fraction: 0.25
   policy_loss_weight: 1.0
   value_loss_weight: 1.0
-  reward_loss_weight: 1.0
-  state_similarity_loss_weight: 0.05
+  reward_loss_weight: 40.0
+  state_similarity_loss_weight: 0.001
   reward_values: [-0.01, 0.0, 1.0]
   model_config:
     state_encoder_config:
@@ -51,6 +52,10 @@ agent_config:
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128
     dynamics_transformer_config:
+      num_blocks: 2
+      num_heads: 4
+      fc_inner_dim: 128
+    memory_aggregator_config:
       num_blocks: 2
       num_heads: 4
       fc_inner_dim: 128
