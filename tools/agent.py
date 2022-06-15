@@ -84,6 +84,7 @@ def eval_agent(args):
         observation_space=env.observation_space,
         action_space=env.action_space, config=config['agent_config'])
     trainer = DummyTrainer(
+        agent=agent,
         env_factory=env_factory,
         num_workers=args.num_workers,
         num_envs=args.num_parallel_envs,
@@ -96,7 +97,7 @@ def eval_agent(args):
 
     stats = EvaluationStats()
     for _ in tqdm.tqdm(range(args.num_steps)):
-        trainer.run_training_step(agent, stats)
+        trainer.run_training_step(stats)
 
     stats.print_summary(title='Stats after taking {} steps:'.format(args.num_steps))
 
