@@ -49,7 +49,7 @@ agent_config:
       transformer_num_blocks: 2
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128
-    policy_network_config:
+    action_outcome_predictor_config:
       transformer_num_blocks: 2
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128

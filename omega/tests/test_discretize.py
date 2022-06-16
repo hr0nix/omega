@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import jax.numpy as jnp
 
-from omega.math import discretize, onehot, undiscretize_expected, round_to_closest_canonic_value
+from omega.math import discretize, undiscretize_expected, round_to_closest_canonic_value
 
 
 @pytest.fixture
@@ -38,11 +38,3 @@ def test_undiscretize_expected(lookup):
     probs = jnp.array([0.5, 0.2, 0.3])
     log_probs = jnp.log(probs)
     assert undiscretize_expected(log_probs, lookup) == pytest.approx(0.01 * 0.5 + 0.1 * 0.2 + 1.0 * 0.3)
-
-
-def test_onehot():
-    np.testing.assert_array_equal(
-        onehot(jnp.array([1, 3]), num_values=5),
-        jnp.array([[0, 1, 0, 0, 0], [0, 0, 0, 1, 0]])
-    )
-

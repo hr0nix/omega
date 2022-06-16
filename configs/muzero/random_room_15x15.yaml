@@ -17,6 +17,7 @@ train_config:
 agent_config:
   use_priorities: false
   lr: 0.001
+  max_gradient_norm: 5.0
   discount_factor: 0.95
   num_train_unroll_steps: 5
   reanalyze_batch_size: 192
@@ -47,7 +48,7 @@ agent_config:
       transformer_num_blocks: 2
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128
-    policy_network_config:
+    action_outcome_predictor_config:
       transformer_num_blocks: 2
       transformer_num_heads: 2
       transformer_fc_inner_dim: 128

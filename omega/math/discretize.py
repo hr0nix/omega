@@ -37,7 +37,7 @@ def discretize_onehot(values, lookup):
     Given a tensor of values and a lookup table, returns a tensor of lookup table values corresponding to
     lookup keys closest to original values in one-hot representation.
     """
-    return onehot(discretize(values, lookup), num_values=len(lookup))
+    return jax.nn.one_hot(discretize(values, lookup), num_classes=len(lookup))
 
 
 def undiscretize_expected(logits, lookup):
@@ -49,11 +49,3 @@ def undiscretize_expected(logits, lookup):
     for k, v in lookup.items():
         result += k * probs[..., v]
     return result
-
-
-def onehot(values, num_values):
-    """
-    Converts the given tensor to one-hot representation.
-    """
-    chex.assert_type(values, jnp.int32)
-    return jnp.eye(num_values)[values]
