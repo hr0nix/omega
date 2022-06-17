@@ -66,9 +66,9 @@ def get_visitation_based_policy(tree, node_index):
 def init_node(
         tree, node_index, state, reward, prediction_fn, rng,
         dirichlet_noise_alpha, exploration_fraction):
-    prediction_key, noise_key = jax.random.split(rng)
+    rng, noise_key = jax.random.split(rng)
 
-    prior_policy_log_probs, value = prediction_fn(state, prediction_key)
+    prior_policy_log_probs, value = prediction_fn(state)
     prior_policy_probs = jax.nn.softmax(prior_policy_log_probs)
     num_actions = prior_policy_log_probs.shape[-1]
 
@@ -99,7 +99,8 @@ def make_tree(
         num_simulations, num_actions, initial_state, prediction_fn, rng,
         dirichlet_noise_alpha, root_exploration_fraction
 ):
-    tree_nodes_max_num = (num_simulations + 1) * num_actions  # Every expansion adds num_actions nodes to the tree
+    # Every expansion adds num_actions nodes to the tree, plus there's the root node
+    tree_nodes_max_num = (num_simulations + 1) * num_actions + 1
 
     tree = {
         'expanded': jnp.zeros(tree_nodes_max_num, dtype=jnp.bool_),
@@ -170,15 +171,15 @@ def simulate(tree, discount_factor, puct_c1):
 
 
 def expand(tree, node_index, prediction_fn, dynamics_fn, rng):
-    prediction_key, dynamics_key = jax.random.split(rng)
+    rng, init_node_key = jax.random.split(rng)
 
     parent_index = get_parent_index(tree, node_index)
     parent_state = tree['state'][parent_index]
     action = get_incoming_action(tree, node_index)
-    child_state, reward = dynamics_fn(parent_state, action, dynamics_key)
+    child_state, reward = dynamics_fn(parent_state, action)
 
     tree = init_node(
-        tree, node_index, child_state, reward, prediction_fn, prediction_key,
+        tree, node_index, child_state, reward, prediction_fn, rng,
         dirichlet_noise_alpha=1.0, exploration_fraction=0.0,  # No exploration in nodes other than root
     )
 

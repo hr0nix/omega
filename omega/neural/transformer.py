@@ -34,11 +34,8 @@ class TransformerBlock(nn.Module):
             self._attention_gate = GRUGate(**self.gating_config)
             self._fc_gate = GRUGate(**self.gating_config)
 
-    def __call__(self, queries, keys_values, deterministic=None, rng=None):
+    def __call__(self, queries, keys_values, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-
-        if rng is None:
-            rng = self.make_rng('transformer_block')
 
         assert queries.shape[-1] == keys_values.shape[-1]
         l = queries
@@ -47,8 +44,7 @@ class TransformerBlock(nn.Module):
         q = self._att_norm_q(l)
         kv = self._att_norm_k(keys_values)
         l = self._att(q, kv)
-        rng, subkey = jax.random.split(rng)
-        l = self._att_dropout(l, deterministic=deterministic, rng=subkey)
+        l = self._att_dropout(l, deterministic=deterministic)
         if self.use_gating:
             l = self._attention_gate(l_prev, l)
         else:
@@ -59,8 +55,7 @@ class TransformerBlock(nn.Module):
         l = self._fc_inner(l)
         l = nn.relu(l)
         l = self._fc(l)
-        rng, subkey = jax.random.split(rng)
-        l = self._fc_dropout(l, deterministic=deterministic, rng=subkey)
+        l = self._fc_dropout(l, deterministic=deterministic)
         if self.use_gating:
             l = self._fc_gate(l_prev, l)
         else:
@@ -96,24 +91,20 @@ class TransformerNetBase(nn.Module):
 
 
 class TransformerNet(TransformerNetBase):
-    def __call__(self, inputs, deterministic=None, rng=None):
+    def __call__(self, inputs, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         l = inputs
         for block_idx in range(self.num_blocks):
-            l = self._blocks[block_idx](
-                queries=l, keys_values=l, deterministic=deterministic, rng=rng
-            )
+            l = self._blocks[block_idx](queries=l, keys_values=l, deterministic=deterministic)
         return l
 
 
 class CrossTransformerNet(TransformerNetBase):
-    def __call__(self, queries, keys_values, deterministic=None, rng=None):
+    def __call__(self, queries, keys_values, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         l = queries
         for block_idx in range(self.num_blocks):
-            l = self._blocks[block_idx](
-                queries=l, keys_values=keys_values, deterministic=deterministic, rng=rng
-            )
+            l = self._blocks[block_idx](queries=l, keys_values=keys_values, deterministic=deterministic)
         return l

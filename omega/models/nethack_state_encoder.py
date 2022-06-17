@@ -126,7 +126,7 @@ class PerceiverNethackStateEncoder(nn.Module):
 
         return pos_embeddings
 
-    def __call__(self, current_state_batch, rng, deterministic=None):
+    def __call__(self, current_state_batch, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         glyphs = current_state_batch['glyphs']
@@ -162,10 +162,7 @@ class PerceiverNethackStateEncoder(nn.Module):
 
         # Perceiver body
         for block_idx in range(self.num_perceiver_blocks):
-            rng, map_attention_key, memory_update_key = jax.random.split(rng, 3)
-            memory = self._map_attention_blocks[block_idx](
-                memory, glyphs_embeddings, deterministic=deterministic, rng=map_attention_key)
-            memory = self._memory_update_blocks[block_idx](
-                memory, deterministic=deterministic, rng=memory_update_key)
+            memory = self._map_attention_blocks[block_idx](memory, glyphs_embeddings, deterministic=deterministic)
+            memory = self._memory_update_blocks[block_idx](memory, deterministic=deterministic)
 
         return memory

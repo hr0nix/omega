@@ -16,4 +16,4 @@ WORKDIR /omega
 COPY ./requirements.txt /omega
 
 RUN python3.8 -m pip install --upgrade pip setuptools wheel
-RUN python3.8 -m pip install -r /omega/requirements.txt --use-deprecated=html5lib --find-links https://storage.googleapis.com/jax-releases/jax_releases.html
+RUN python3.8 -m pip install -r /omega/requirements.txt --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html

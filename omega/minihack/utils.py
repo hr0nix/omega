@@ -6,7 +6,7 @@ def glyph_pos(glyphs, glyph):
     assert len(glyph_positions) == 2
     if glyph_positions[0].shape[0] == 0:
         return None
-    return np.array([glyph_positions[0][0], glyph_positions[1][0]], dtype=np.float)
+    return np.array([glyph_positions[0][0], glyph_positions[1][0]], dtype=np.float32)
 
 
 def print_char_glyphs(char_glyphs):

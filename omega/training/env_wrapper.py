@@ -38,8 +38,8 @@ class EnvWrapper(gym.Env):
     def is_running(self):
         return self._current_state is not None
 
-    def reset(self):
-        self._current_state = self._env.reset()
+    def reset(self, *args, **kwargs):
+        self._current_state = self._env.reset(*args, **kwargs)
         self._is_done = False
         return self._current_state
 
