@@ -80,8 +80,9 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         self._action_embedder = nn.Embed(
             num_embeddings=self.num_actions, features=self._state_encoder.memory_dim,
             name='action_embedder')
-        self._chance_outcome_embedder = nn.Embed(
-            num_embeddings=self.num_chance_outcomes, features=self._state_encoder.memory_dim,
+        self._chance_outcome_embedder = nn.Dense(
+            # No bias is needed: inputs are one-hot, so we can map them to anything
+            features=self._state_encoder.memory_dim, use_bias=False,
             name='chance_outcome_embedder')
         self._memory_aggregator = CrossTransformerNet(
             dim=self._state_encoder.memory_dim,
@@ -196,27 +197,26 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         action_embedding = jnp.expand_dims(action_embedding, axis=-2)
         previous_latent_state_with_action = jnp.concatenate([action_embedding, previous_latent_state], axis=-2)
 
-        next_latent_state = self._afterstate_dynamics_transformer(
+        latent_afterstate = self._afterstate_dynamics_transformer(
             previous_latent_state, previous_latent_state_with_action, deterministic=deterministic)
 
-        chex.assert_rank(next_latent_state, 3)
-        chex.assert_axis_dimension(next_latent_state, 0, 1)
-        return pytree.squeeze(next_latent_state, axis=0)
+        chex.assert_rank(latent_afterstate, 3)
+        return pytree.squeeze(latent_afterstate, axis=0)
 
-    def dynamics(self, latent_afterstate, chance_outcome, deterministic=None):
+    def dynamics(self, latent_afterstate, chance_outcome_one_hot, deterministic=None):
         """
         Produces the next latent state and reward if a given chance outcome happens at a given afterstate.
         Inputs are assumed to be non-batched.
         """
-        chex.assert_rank([latent_afterstate, chance_outcome], [2, 0])
+        chex.assert_rank([latent_afterstate, chance_outcome_one_hot], [2, 1])
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         # TODO: rewrite layers so that they don't assume that the batch dimension is present
         latent_afterstate = pytree.expand_dims(latent_afterstate, axis=0)
-        chance_outcome = pytree.expand_dims(chance_outcome, axis=0)
+        chance_outcome_one_hot = pytree.expand_dims(chance_outcome_one_hot, axis=0)
 
-        chance_outcome_embedding = self._chance_outcome_embedder(chance_outcome)
+        chance_outcome_embedding = self._chance_outcome_embedder(chance_outcome_one_hot)
         chance_outcome_embedding = jnp.expand_dims(chance_outcome_embedding, axis=-2)
         latent_afterstate_with_chance_outcome = jnp.concatenate([chance_outcome_embedding, latent_afterstate], axis=-2)
 
@@ -275,7 +275,9 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         latent_afterstate = pytree.expand_dims(latent_afterstate, axis=0)
 
         all_chance_outcomes = jnp.arange(0, self.num_chance_outcomes, dtype=jnp.int32)
-        all_chance_outcome_embeddings = self._chance_outcome_embedder(all_chance_outcomes)
+        all_chance_outcomes_onehot = jax.nn.one_hot(
+            all_chance_outcomes, num_classes=self.num_chance_outcomes, dtype=jnp.float32)
+        all_chance_outcome_embeddings = self._chance_outcome_embedder(all_chance_outcomes_onehot)
         all_chance_outcome_embeddings = pytree.expand_dims(all_chance_outcome_embeddings, axis=0)
         log_chance_outcome_probs = self._chance_outcome_predictor(
             all_chance_outcome_embeddings, latent_afterstate, deterministic=deterministic)

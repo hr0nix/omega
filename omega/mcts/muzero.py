@@ -95,7 +95,7 @@ def init_node(
     tree['action_prior_probs'] = tree['action_prior_probs'].at[node_index].set(action_prior_probs)
 
     first_child_index = tree['first_free_index'][0]
-    max_num_children = jnp.maximum(get_num_actions(tree), get_num_chance_outcomes(tree))
+    max_num_children = max(get_num_actions(tree), get_num_chance_outcomes(tree))
     next_free_index = first_child_index + max_num_children
     tree['first_child_index'] = tree['first_child_index'].at[node_index].set(first_child_index)
     tree['parent_index'] = jax.lax.dynamic_update_slice(
@@ -111,7 +111,7 @@ def make_tree(
         dirichlet_noise_alpha, root_exploration_fraction
 ):
     # Every expansion adds max(num_chance_outcomes, num_actions) nodes, plus there's the root node
-    max_nodes_added_per_simulation = jnp.maximum(num_chance_outcomes, num_actions)
+    max_nodes_added_per_simulation = max(num_chance_outcomes, num_actions)
     tree_nodes_max_num = (num_simulations + 1) * max_nodes_added_per_simulation + 1
 
     tree = {
@@ -215,9 +215,12 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     local_child_index = get_local_child_index(tree, node_index)
 
     def chance_node_expansion(_):
-        child_state, reward = dynamics_fn(parent_state, local_child_index)
+        # Dynamics takes chance outcome input as onehot because it needs to be differentiable
+        num_chance_outcomes = get_num_chance_outcomes(tree)
+        chance_outcome_one_hot = jax.nn.one_hot(local_child_index, num_classes=num_chance_outcomes, dtype=jnp.float32)
+        child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot)
         action_log_probs, value = prediction_fn(child_state)
-        chance_outcome_log_probs = jnp.zeros(get_num_chance_outcomes(tree), dtype=jnp.float32)
+        chance_outcome_log_probs = jnp.zeros(num_chance_outcomes, dtype=jnp.float32)
         is_chance = False
         return child_state, reward, value, action_log_probs, chance_outcome_log_probs, is_chance
 

@@ -184,8 +184,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def _make_fake_action(self):
         return jnp.zeros(shape=(), dtype=jnp.int32)
 
-    def _make_fake_chance_outcome(self):
-        return jnp.zeros(shape=(), dtype=jnp.int32)
+    def _make_fake_chance_outcome_one_hot(self):
+        return jax.nn.one_hot(0, num_classes=self._model.num_chance_outcomes, dtype=jnp.float32)
 
     def _make_fake_chance_outcome_encoder_inputs(self):
         return self._make_fake_latent_state(),
@@ -194,7 +194,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return self._make_fake_memory(), self._make_fake_action(), self._make_fake_observation()
 
     def _make_fake_dynamics_inputs(self):
-        return self._make_fake_latent_state(), self._make_fake_chance_outcome()
+        return self._make_fake_latent_state(), self._make_fake_chance_outcome_one_hot()
 
     def _make_fake_afterstate_dynamics_inputs(self):
         return self._make_fake_latent_state(), self._make_fake_action()
@@ -482,20 +482,21 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 batch_chance_outcome_encoder_fn = jax.vmap(chance_outcome_encoder_fn, in_axes=(None, 0), out_axes=0)
                 encoded_chance_outcomes = batch_chance_outcome_encoder_fn(params, trajectory_latent_states)
                 num_chance_outcomes = encoded_chance_outcomes.shape[-1]
-                chance_outcome_probs = jax.nn.one_hot(
-                    jnp.argmax(encoded_chance_outcomes, axis=-1), num_classes=num_chance_outcomes)
-                chance_outcome_probs = encoded_chance_outcomes + jax.lax.stop_gradient(
-                    chance_outcome_probs - encoded_chance_outcomes)
+                chance_outcomes_one_hot = jax.nn.one_hot(
+                    jnp.argmax(encoded_chance_outcomes, axis=-1), num_classes=num_chance_outcomes, dtype=jnp.float32)
+                chance_outcomes_one_hot = encoded_chance_outcomes + jax.lax.stop_gradient(
+                    chance_outcomes_one_hot - encoded_chance_outcomes)  # Straight-through estimator
                 chance_outcome_commitment_loss = jnp.mean(
-                    rlax.l2_loss(encoded_chance_outcomes, jax.lax.stop_gradient(chance_outcome_probs))) / num_chance_outcomes
-                chance_outcome_probs_padded = jnp.concatenate(
+                    rlax.l2_loss(encoded_chance_outcomes, jax.lax.stop_gradient(chance_outcomes_one_hot))) / num_chance_outcomes
+                # Pad so that we have valid values at the end of trajectory (loss will be masked there anyway)
+                chance_outcomes_one_hot_padded = jnp.concatenate(
                     [
-                        chance_outcome_probs,
-                        jnp.full(
-                            shape=(num_unroll_steps, num_chance_outcomes),
-                            fill_value=1.0 / num_chance_outcomes,
-                            dtype=jnp.float32,
-                        )
+                        chance_outcomes_one_hot,
+                        jax.nn.one_hot(
+                            jnp.zeros(num_unroll_steps, dtype=jnp.int32),
+                            num_classes=num_chance_outcomes,
+                            dtype=jnp.float32
+                        ),
                     ],
                     axis=0,
                 )
@@ -508,21 +509,27 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 state_similarity_loss = 0.0
                 current_latent_states = trajectory_latent_states
                 for unroll_step in range(num_unroll_steps):  # TODO: lax.fori ?
+                    current_state_valid_mask = jnp.arange(0, num_timestamps) < num_timestamps - unroll_step
+                    next_state_valid_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
+                    current_state_valid_scale = 1.0 / jnp.sum(current_state_valid_mask)
+                    next_state_valid_scale = 1.0 / jnp.sum(next_state_valid_mask)
+
                     actions = trajectory['training_targets']['actions'][:, unroll_step]
-                    loss_mask = trajectory['training_targets']['unroll_step_mask'][:, unroll_step]
                     next_state_is_terminal_or_after = trajectory['training_targets']['next_state_is_terminal_or_after'][:, unroll_step]
                     next_state_is_terminal_or_after_extra_dim = jnp.expand_dims(
                         next_state_is_terminal_or_after, axis=1)
                     value_targets = trajectory['training_targets']['value'][:, unroll_step]
+                    afterstate_value_targets = trajectory['training_targets']['afterstate_value'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['rewards_one_hot'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
                     # TODO: is it worth adding stop_gradient for state_targets here?
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
-                    chance_outcome_targets = chance_outcome_probs_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
-                    # When there's no next state in trajectory due to termination, we use uniform chance targets
-                    chance_outcome_targets = (
-                        chance_outcome_targets * (1 - next_state_is_terminal_or_after_extra_dim) +
-                        jnp.full_like(chance_outcome_targets, 1.0 / num_chance_outcomes) * next_state_is_terminal_or_after_extra_dim
+                    chance_outcome_one_hot_targets = chance_outcomes_one_hot_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
+                    # When there's no next state in trajectory due to termination,
+                    # we use an arbitrary chance outcome (zero)
+                    chance_outcome_one_hot_targets = (
+                        chance_outcome_one_hot_targets * (1 - next_state_is_terminal_or_after_extra_dim) +
+                        jax.nn.one_hot(0, num_chance_outcomes, dtype=jnp.float32) * next_state_is_terminal_or_after_extra_dim
                     )
 
                     # Predict state value and the next action
@@ -546,40 +553,39 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the next state and the reward
                     dynamics_fn = functools.partial(train_state.dynamics_fn, deterministic=deterministic)
                     batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(None, 0, 0), out_axes=0)
-                    current_latent_states, reward_log_probs = batch_dynamics_fn(params, current_latent_states, actions)
+                    current_latent_states, reward_log_probs = batch_dynamics_fn(
+                        params, current_latent_states, chance_outcome_one_hot_targets)
 
                     # Compute prediction losses
                     step_value_loss = rlax.l2_loss(state_values, value_targets)
-                    step_afterstate_value_loss = rlax.l2_loss(afterstate_values, value_targets)
+                    step_afterstate_value_loss = rlax.l2_loss(afterstate_values, afterstate_value_targets)
                     step_reward_loss = jax.vmap(rlax.categorical_cross_entropy)(reward_targets, reward_log_probs)
                     step_policy_loss = jax.vmap(rlax.categorical_cross_entropy)(policy_targets, policy_log_probs)
 
                     # Mask out every timestamp for which we don't have a valid target
                     # Also apply loss scaling to make loss timestamp-independent
-                    loss_scale = 1.0 / jnp.sum(loss_mask)
-                    afterstate_value_loss += jnp.sum(loss_mask * step_afterstate_value_loss) * loss_scale
-                    value_loss += jnp.sum(loss_mask * step_value_loss) * loss_scale
-                    reward_loss += jnp.sum(loss_mask * step_reward_loss) * loss_scale
-                    policy_loss += jnp.sum(loss_mask * step_policy_loss) * loss_scale
 
-                    # There will be no next states at the end of the trajectory
-                    no_next_state_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
+                    value_loss += jnp.sum(current_state_valid_mask * step_value_loss) * current_state_valid_scale
+                    reward_loss += jnp.sum(current_state_valid_mask * step_reward_loss) * current_state_valid_scale
+                    policy_loss += jnp.sum(current_state_valid_mask * step_policy_loss) * current_state_valid_scale
+                    afterstate_value_loss += jnp.sum(
+                        next_state_valid_mask * step_afterstate_value_loss) * next_state_valid_scale
 
                     # Compute chance outcome prediction loss
                     step_chance_outcome_prediction_loss = jax.vmap(rlax.categorical_cross_entropy)(
-                        chance_outcome_targets, chance_outcome_log_probs)
+                        jax.lax.stop_gradient(chance_outcome_one_hot_targets), chance_outcome_log_probs)
                     chance_outcome_prediction_loss += jnp.sum(
-                        no_next_state_mask * step_chance_outcome_prediction_loss
-                    ) / jnp.sum(no_next_state_mask)
+                        next_state_valid_mask * step_chance_outcome_prediction_loss) * next_state_valid_scale
 
                     # Compute state similarity loss loosely inspired by EfficientZero paper
                     # https://arxiv.org/abs/2111.00210
+                    # TODO: use a BYOL-like method here
                     step_state_similarity_loss = jnp.mean(
                         rlax.l2_loss(current_latent_states, state_targets),
                         axis=(-2, -1))
                     # We don't have targets at the end of a trajectory
                     # We also don't have next state targets for terminal states or anything after
-                    state_similarity_loss_mask = no_next_state_mask * (1.0 - next_state_is_terminal_or_after)
+                    state_similarity_loss_mask = next_state_valid_mask * (1.0 - next_state_is_terminal_or_after)
                     state_similarity_loss += (
                         jnp.sum(state_similarity_loss_mask * step_state_similarity_loss) /
                         (jnp.sum(state_similarity_loss_mask) + 1e-10)  # Just in case
@@ -677,14 +683,15 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             # MuZero Reanalyze paper has shown that it works, but a bit worse for some reason. Works fine for us.
             state_values = trajectory['mcts_reanalyze']['state_values']
 
-            # Allocate memory for training targets
+            # Allocate memory for training targets.
+            # We will pre-compute training targets for every unroll step where possible.
             trajectory = pytree.update(trajectory, {
                 'training_targets': {
                     'value': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
+                    'afterstate_value': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'rewards_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
                     'policy': jnp.zeros((num_timestamps, num_unroll_steps, num_actions), dtype=jnp.float32),
                     'actions': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.int32),
-                    'unroll_step_mask': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
                     'next_state_is_terminal_or_after': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
                 }
             })
@@ -693,7 +700,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             assert num_timestamps >= num_unroll_steps, 'There will be unroll steps with no ground truth at all otherwise'
             padded_target_sources = {
                 'state_values': jnp.concatenate(
-                    [state_values, jnp.zeros(num_unroll_steps - 1, dtype=jnp.float32)]
+                    # We need an extra padded value here to compute afterstate values
+                    [state_values, jnp.zeros(num_unroll_steps, dtype=jnp.float32)]
                 ),
                 'actions': jnp.concatenate(
                     [trajectory['actions'], jnp.zeros(num_unroll_steps - 1, dtype=jnp.int32)]
@@ -721,10 +729,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 state_is_terminal_or_after_extra_dim = jnp.expand_dims(state_is_terminal_or_after, axis=-1)
 
-                unroll_step_mask = jnp.arange(0, num_timestamps) < num_timestamps - unroll_step
                 actions = jax.lax.dynamic_slice_in_dim(
                     padded_target_sources['actions'], unroll_step, num_timestamps, axis=0)
-                # Value and reward targets are zero after we've reached an absorbing state
+                # Value and reward targets are zero after we've reached a terminal state
                 value_targets = (
                     jax.lax.dynamic_slice_in_dim(
                         padded_target_sources['state_values'], unroll_step, num_timestamps, axis=0) *
@@ -750,15 +757,22 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     jax.lax.dynamic_slice_in_dim(padded_target_sources['done'], unroll_step, num_timestamps, axis=0)
                 )
 
+                afterstate_value_targets = (
+                    reward_targets_scalar +
+                    self._config['discount_factor'] * jax.lax.dynamic_slice_in_dim(
+                        padded_target_sources['state_values'], unroll_step + 1, num_timestamps, axis=0) *
+                    (1.0 - next_state_is_terminal_or_after)
+                )
+
                 trajectory['training_targets'] = {
                     'value': trajectory['training_targets']['value'].at[:, unroll_step].set(value_targets),
+                    'afterstate_value': trajectory['training_targets']['afterstate_value'].at[:, unroll_step].set(
+                        afterstate_value_targets),
                     'rewards_scalar' : trajectory['training_targets']['rewards_scalar'].at[:, unroll_step].set(
                         reward_targets_scalar),
                     'policy': trajectory['training_targets']['policy'].at[:, unroll_step].set(policy_target_probs),
                     'actions': trajectory['training_targets']['actions'].at[:, unroll_step].set(
                         actions),
-                    'unroll_step_mask': trajectory['training_targets']['unroll_step_mask'].at[:, unroll_step].set(
-                        unroll_step_mask),
                     'next_state_is_terminal_or_after':
                         trajectory['training_targets']['next_state_is_terminal_or_after'].at[:, unroll_step].set(
                             next_state_is_terminal_or_after),
