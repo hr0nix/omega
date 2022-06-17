@@ -52,9 +52,9 @@ class Trainer(abc.ABC):
                 if stats is not None:
                     stats.add_transition(
                         self._current_episode_indices[env_index],
-                        np.asscalar(action_batch_np[env_index]),
-                        np.asscalar(reward_done_next_state_batch_np['rewards'][env_index]),
-                        np.asscalar(reward_done_next_state_batch_np['done'][env_index]),
+                        action_batch_np[env_index].item(),
+                        reward_done_next_state_batch_np['rewards'][env_index].item(),
+                        reward_done_next_state_batch_np['done'][env_index].item(),
                     )
 
                 if reward_done_next_state_batch_np['done'][env_index]:

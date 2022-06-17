@@ -32,7 +32,7 @@ class Worker(object):
             next_state_per_env.append(next_state)
 
         return {
-            'rewards': np.asarray(reward_per_env, dtype=np.float),
+            'rewards': np.asarray(reward_per_env, dtype=np.float64),
             'done': np.asarray(done_per_env, dtype=np.bool_),
             'next_state': pytree.stack(next_state_per_env, axis=0),
         }

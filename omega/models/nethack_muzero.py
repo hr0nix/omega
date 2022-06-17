@@ -23,13 +23,13 @@ class NethackMuZeroModelBase(nn.Module):
     def initial_memory_state(self):
         raise NotImplementedError()
 
-    def representation(self, prev_memory, prev_action, observation, rng, deterministic=None):
+    def representation(self, prev_memory, prev_action, observation, deterministic=None):
         raise NotImplementedError()
 
-    def dynamics(self, previous_latent_states, actions, rng, deterministic=None):
+    def dynamics(self, previous_latent_states, actions, deterministic=None):
         raise NotImplementedError()
 
-    def prediction(self, latent_states, rng, deterministic=None):
+    def prediction(self, latent_states, deterministic=None):
         raise NotImplementedError()
 
 
@@ -101,23 +101,20 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         memory_indices = jnp.arange(0, self._state_encoder.num_memory_units, dtype=jnp.int32)
         return self._initial_memory_embedder(memory_indices)
 
-    def representation(self, prev_memory, prev_action, observation, rng, deterministic=None):
+    def representation(self, prev_memory, prev_action, observation, deterministic=None):
         """
         Produces the representation of an observation.
         """
         chex.assert_rank(observation['glyphs'], 2)  # rows, cols
-        chex.assert_rank(rng, 1)
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-
-        state_encoder_key, memory_aggregator_key = jax.random.split(rng, 2)
 
         # TODO: rewrite layers so that they don't assume that the batch dimension is present
         observation = pytree.expand_dims(observation, axis=0)
         prev_memory = pytree.expand_dims(prev_memory, axis=0)
         prev_action = pytree.expand_dims(prev_action, axis=0)
 
-        latent_observation = self._state_encoder(observation, deterministic=deterministic, rng=state_encoder_key)
+        latent_observation = self._state_encoder(observation, deterministic=deterministic)
 
         # Fuse prev action embedding with prev memory
         prev_action_embedding = self._action_embedder(prev_action)
@@ -126,7 +123,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         # Attend from latent observation to prev memory
         representation = self._memory_aggregator(
-            latent_observation, prev_memory_with_action, deterministic=deterministic, rng=memory_aggregator_key)
+            latent_observation, prev_memory_with_action, deterministic=deterministic)
 
         chex.assert_rank(representation, 3)
         chex.assert_axis_dimension(representation, 0, 1)
@@ -137,15 +134,14 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         # Also return the representation as the updated memory value
         return representation, representation
 
-    def dynamics(self, previous_latent_state, action, rng, deterministic=None):
+    def dynamics(self, previous_latent_state, action, deterministic=None):
         """
         Produces the next latent state and reward if a given action is taken at a given state.
         Inputs are assumed to be non-batched.
         """
-        chex.assert_rank([previous_latent_state, action, rng], [2, 0, 1])
+        chex.assert_rank([previous_latent_state, action], [2, 0])
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-        dynamics_function_key, reward_predictor_key = jax.random.split(rng)
 
         # TODO: rewrite layers so that they don't assume that the batch dimension is present
         previous_latent_state = pytree.expand_dims(previous_latent_state, axis=0)
@@ -156,11 +152,9 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         previous_latent_state_with_action = jnp.concatenate([action_embedding, previous_latent_state], axis=-2)
 
         next_latent_state = self._dynamics_transformer(
-            previous_latent_state, previous_latent_state_with_action,
-            deterministic=deterministic, rng=dynamics_function_key)
+            previous_latent_state, previous_latent_state_with_action, deterministic=deterministic)
 
-        log_reward_probs = self._reward_predictor(
-            previous_latent_state_with_action, deterministic=deterministic, rng=reward_predictor_key)
+        log_reward_probs = self._reward_predictor(previous_latent_state_with_action, deterministic=deterministic)
         log_reward_probs = jax.nn.log_softmax(log_reward_probs, axis=-1)
 
         chex.assert_rank([next_latent_state, log_reward_probs], [3, 2])
@@ -171,26 +165,24 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             pytree.squeeze(log_reward_probs, axis=0),
         )
 
-    def prediction(self, latent_state, rng, deterministic=None):
+    def prediction(self, latent_state, deterministic=None):
         """
         Computes the policy and the value estimate for a single (non-batched) state.
         """
 
-        chex.assert_rank([latent_state, rng], [2, 1])
+        chex.assert_rank(latent_state, 2)
 
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-        policy_network_key, value_predictor_key = jax.random.split(rng)
 
         latent_state = pytree.expand_dims(latent_state, axis=0)
 
         all_actions = jnp.arange(0, self.num_actions, dtype=jnp.int32)
         all_action_embeddings = self._action_embedder(all_actions)
         all_action_embeddings = pytree.expand_dims(all_action_embeddings, axis=0)
-        log_action_probs = self._policy_network(
-            all_action_embeddings, latent_state, deterministic=deterministic, rng=policy_network_key)
+        log_action_probs = self._policy_network(all_action_embeddings, latent_state, deterministic=deterministic)
 
         value = jnp.squeeze(
-            self._value_predictor(latent_state, deterministic=deterministic, rng=value_predictor_key),
+            self._value_predictor(latent_state, deterministic=deterministic),
             axis=-1
         )
 

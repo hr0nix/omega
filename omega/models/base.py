@@ -56,12 +56,10 @@ class ItemSelector(nn.Module):
             name='logits_producer'
         )
 
-    def __call__(self, items, memory, rng, deterministic=None):
+    def __call__(self, items, memory, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        rng, subkey = jax.random.split(rng)
-
-        items = self._selection_transformer(items, memory, deterministic=deterministic, rng=subkey)
+        items = self._selection_transformer(items, memory, deterministic=deterministic)
         item_logits = self._logits_producer(items)
         item_logits = jnp.squeeze(item_logits, axis=-1)
         item_log_probs = jax.nn.log_softmax(item_logits, axis=-1)
@@ -102,13 +100,11 @@ class ItemPredictor(nn.Module):
             name='scalar_producer',
         )
 
-    def __call__(self, memory, rng, deterministic=None):
+    def __call__(self, memory, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-        rng, subkey = jax.random.split(rng)
 
         output_embeddings = self._output_embedder(batch_size=memory.shape[0])
-        output_embeddings = self._output_transformer(
-            output_embeddings, memory, deterministic=deterministic, rng=subkey)
+        output_embeddings = self._output_transformer(output_embeddings, memory, deterministic=deterministic)
         outputs = self._scalar_producer(output_embeddings)
         outputs = jnp.squeeze(outputs, -1)
 

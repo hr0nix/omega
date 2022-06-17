@@ -25,6 +25,7 @@ def make_env(train_config, episodes_dir):
         train_config['env_name'],
         observation_keys=train_config['observation_keys'],
         savedir=episodes_dir,
+        disable_env_checker=True,
     )
 
 

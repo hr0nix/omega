@@ -87,19 +87,20 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             name='mu_zero_model')
 
         initial_memory_params = self._model.init(
-            self.next_random_key(), method=self._model.initial_memory_state)
+            {'params': self.next_random_key()},
+            method=self._model.initial_memory_state)
         representation_params = self._model.init(
-            self.next_random_key(), *self._make_fake_representation_inputs(),
-            method=self._model.representation,
-            deterministic=False, rng=self.next_random_key())
+            {'dropout': self.next_random_key(), 'params': self.next_random_key()},
+            *self._make_fake_representation_inputs(),
+            method=self._model.representation, deterministic=False)
         dynamics_params = self._model.init(
-            self.next_random_key(), *self._make_fake_dynamics_inputs(),
-            method=self._model.dynamics,
-            deterministic=False, rng=self.next_random_key())
+            {'dropout': self.next_random_key(), 'params': self.next_random_key()},
+            *self._make_fake_dynamics_inputs(),
+            method=self._model.dynamics, deterministic=False)
         prediction_params = self._model.init(
-            self.next_random_key(), *self._make_fake_prediction_inputs(),
-            method=self._model.prediction,
-            deterministic=False, rng=self.next_random_key())
+            {'dropout': self.next_random_key(), 'params': self.next_random_key()},
+            *self._make_fake_prediction_inputs(),
+            method=self._model.prediction, deterministic=False)
 
         # Merge params from different initializations, some values will be overridden
         model_params = merge_params(initial_memory_params, representation_params, dynamics_params, prediction_params)
@@ -107,10 +108,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._train_state = self.TrainState.create(
             params=model_params, tx=self._make_optimizer(),
             apply_fn=self._model.apply,
-            initial_memory_state_fn=functools.partial(self._model.apply, method=self._model.initial_memory_state),
-            representation_fn=functools.partial(self._model.apply, method=self._model.representation),
-            dynamics_fn=functools.partial(self._model.apply, method=self._model.dynamics),
-            prediction_fn=functools.partial(self._model.apply, method=self._model.prediction),
+            initial_memory_state_fn=functools.partial(
+                self._model.apply, method=self._model.initial_memory_state, rngs={'dropout': self.next_random_key()}),
+            representation_fn=functools.partial(
+                self._model.apply, method=self._model.representation, rngs={'dropout': self.next_random_key()}),
+            dynamics_fn=functools.partial(
+                self._model.apply, method=self._model.dynamics, rngs={'dropout': self.next_random_key()}),
+            prediction_fn=functools.partial(
+                self._model.apply, method=self._model.prediction, rngs={'dropout': self.next_random_key()}),
         )
 
     def _make_optimizer(self):
@@ -225,9 +230,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': done,
         }
 
-    def _represent_trajectory(
-            self, params, observation_trajectory, memory_trajectory,
-            train_state, deterministic, rng):
+    def _represent_trajectory(self, params, observation_trajectory, memory_trajectory, train_state, deterministic):
         """
         Recurrently unrolls the representation function forwards starting from the initial memory state
         to embed the given observation trajectory.
@@ -236,8 +239,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         representation_fn = functools.partial(train_state.representation_fn, deterministic=deterministic)
 
         def representation_loop(state, input):
-            prev_memory, first_timestamp_of_the_day, rng = state
-            representation_key, rng = jax.random.split(rng)
+            prev_memory, first_timestamp_of_the_day = state
 
             prev_action = input['prev_action']
             prev_done = input['prev_done']
@@ -248,17 +250,16 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             prev_memory = prev_memory * (1 - prev_done) + initial_memory_state * prev_done
 
             # Recurrently embed the observation and compute the updated memory
-            latent_observation, updated_memory = representation_fn(
-                params, prev_memory, prev_action, cur_observation, representation_key)
+            latent_observation, updated_memory = representation_fn(params, prev_memory, prev_action, cur_observation)
 
-            return (updated_memory, False, rng), (latent_observation, updated_memory)
+            return (updated_memory, False), (latent_observation, updated_memory)
 
         num_timestamps = pytree.get_axis_dim(observation_trajectory, axis=0)
         # Recompute memory within the trajectory but use a fixed initial state
         initial_memory = memory_trajectory['memory'][0]
         _, (latent_state_trajectory, updated_memory_trajectory) = jax.lax.scan(
             f=representation_loop,
-            init=(initial_memory, True, rng),
+            init=(initial_memory, True),
             xs={
                 'prev_action': memory_trajectory['prev_actions'],
                 'prev_done': memory_trajectory['prev_done'],
@@ -330,20 +331,16 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _compute_mcts_statistics(
             self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
-        representation_key, mcts_key = jax.random.split(rng)
-
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
-        represent_trajectory_batch_fn = jax.vmap(self._represent_trajectory, in_axes=(None, 0, 0, None, None, 0))
-        representation_key_batch = jax.random.split(representation_key, batch_size)
+        represent_trajectory_batch_fn = jax.vmap(self._represent_trajectory, in_axes=(None, 0, 0, None, None))
         latent_state_trajectory_batch, updated_memory_trajectory_batch = represent_trajectory_batch_fn(
             train_state.params,
             observation_trajectory_batch, memory_trajectory_batch,
-            train_state, deterministic, representation_key_batch)
+            train_state, deterministic)
 
-        def dynamics_fn(params, state, action, rng, deterministic):
-            next_state, reward_logits = train_state.dynamics_fn(
-                params, state, action, rng, deterministic=deterministic)
+        def dynamics_fn(params, state, action, deterministic):
+            next_state, reward_logits = train_state.dynamics_fn(params, state, action, deterministic=deterministic)
             # Convert reward back to continuous form
             return next_state, undiscretize_expected(reward_logits, self._reward_lookup)
 
@@ -362,6 +359,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         )
         trajectory_mcts = jax.vmap(mcts_func)
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
+        mcts_key, rng = jax.random.split(rng)
         mcts_key_batch = jax.random.split(mcts_key, batch_size * num_timestamps).reshape(batch_size, num_timestamps, 2)
         mcts_policy_log_probs, mcts_value, mcts_stats = trajectory_batch_mcts(
             latent_state_trajectory_batch, mcts_key_batch)
@@ -398,22 +396,21 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _train(self, training_batch):
         self._train_state, train_stats, per_trajectory_loss_details = self._train_jit(
-            self._train_state, training_batch, self.next_random_key())
+            self._train_state, training_batch)
         train_stats = pytree.update(train_stats, self._replay_buffer.get_stats())
         return train_stats, per_trajectory_loss_details
 
     @partial(jax.jit, static_argnums=(0,))
-    def _train_jit(self, train_state, training_batch, rng):
-        def loss_function(params, rng):
-            def trajectory_loss(params, trajectory, rng):
-                rng, representation_key = jax.random.split(rng)
+    def _train_jit(self, train_state, training_batch):
+        def loss_function(params):
+            def trajectory_loss(params, trajectory):
                 deterministic = self._config['train_deterministic']
 
                 num_unroll_steps = self._config['num_train_unroll_steps']
 
                 trajectory_latent_states, _ = self._represent_trajectory(
                     params, trajectory['current_state'], trajectory['memory_before'],
-                    train_state, deterministic, representation_key)
+                    train_state, deterministic)
                 trajectory_latent_states_padded = jnp.concatenate(
                     [
                         trajectory_latent_states,
@@ -431,8 +428,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 policy_loss = 0.0
                 state_similarity_loss = 0.0
                 for unroll_step in range(num_unroll_steps):  # TODO: lax.fori ?
-                    rng, prediction_key, dynamics_key = jax.random.split(rng, 3)
-
                     actions = trajectory['training_targets']['actions'][:, unroll_step]
                     loss_mask = trajectory['training_targets']['unroll_step_mask'][:, unroll_step]
                     next_state_is_terminal_or_after = trajectory['training_targets']['next_state_is_terminal_or_after'][:, unroll_step]
@@ -442,16 +437,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
 
                     prediction_fn = functools.partial(train_state.prediction_fn, deterministic=deterministic)
-                    batch_prediction_fn = jax.vmap(prediction_fn, in_axes=(None, 0, 0), out_axes=0)
-                    prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
-                    policy_log_probs, state_values = batch_prediction_fn(
-                        params, current_latent_states, prediction_key_batch)
+                    batch_prediction_fn = jax.vmap(prediction_fn, in_axes=(None, 0), out_axes=0)
+                    policy_log_probs, state_values = batch_prediction_fn(params, current_latent_states)
 
                     dynamics_fn = functools.partial(train_state.dynamics_fn, deterministic=deterministic)
-                    batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(None, 0, 0, 0), out_axes=0)
-                    dynamics_key_batch = jax.random.split(dynamics_key, num_timestamps)
-                    current_latent_states, reward_log_probs = batch_dynamics_fn(
-                        params, current_latent_states, actions, dynamics_key_batch)
+                    batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(None, 0, 0), out_axes=0)
+                    current_latent_states, reward_log_probs = batch_dynamics_fn(params, current_latent_states, actions)
 
                     step_value_loss = rlax.l2_loss(state_values, value_targets)
                     step_reward_loss = jax.vmap(rlax.categorical_cross_entropy)(reward_targets, reward_log_probs)
@@ -497,20 +488,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'muzero_loss': loss,
                 }
 
-            representation_key, batch_loss_key = jax.random.split(rng)
-
-            batch_loss = jax.vmap(trajectory_loss, in_axes=(None, 0, 0), out_axes=(0, 0))
-            batch_size = pytree.get_axis_dim(training_batch, axis=0)
-            batch_loss_key_array = jax.random.split(batch_loss_key, batch_size)
-            per_trajectory_losses, per_trajectory_loss_details = batch_loss(
-                params, training_batch, batch_loss_key_array)
+            batch_loss = jax.vmap(trajectory_loss, in_axes=(None, 0), out_axes=(0, 0))
+            per_trajectory_losses, per_trajectory_loss_details = batch_loss(params, training_batch)
             loss = jnp.mean(per_trajectory_losses)
 
             return loss, per_trajectory_loss_details
 
-        rng, grad_key = jax.random.split(rng)
         grad_and_loss_details_func = jax.grad(loss_function, argnums=0, has_aux=True)
-        grads, per_trajectory_loss_details = grad_and_loss_details_func(train_state.params, grad_key)
+        grads, per_trajectory_loss_details = grad_and_loss_details_func(train_state.params)
         train_state = train_state.apply_gradients(grads=grads)
 
         stats = pytree.mean(per_trajectory_loss_details)
