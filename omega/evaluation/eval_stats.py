@@ -113,4 +113,3 @@ class EvaluationStats(object):
             ('Unique rewards', 'unique_rewards'),
         ]:
             print('  {}: {}'.format(key_title, stats[key]), flush=True)
-
