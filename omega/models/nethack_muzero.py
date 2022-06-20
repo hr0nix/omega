@@ -144,7 +144,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         chance_outcome_embedding = self._chance_outcome_encoder(latent_state, deterministic=deterministic)
 
         chex.assert_rank(chance_outcome_embedding, 2)
-        return pytree.squeeze(chance_outcome_embedding, axis=0)
+
+        # TODO: remove me
+        return jax.nn.one_hot(0, num_classes=self.num_chance_outcomes, dtype=jnp.float32)
+
+        #return pytree.squeeze(chance_outcome_embedding, axis=0)
 
 
     def representation(self, prev_memory, prev_action, observation, deterministic=None):
@@ -218,7 +222,8 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         chance_outcome_embedding = self._chance_outcome_embedder(chance_outcome_one_hot)
         chance_outcome_embedding = jnp.expand_dims(chance_outcome_embedding, axis=-2)
-        latent_afterstate_with_chance_outcome = jnp.concatenate([chance_outcome_embedding, latent_afterstate], axis=-2)
+        #latent_afterstate_with_chance_outcome = jnp.concatenate([chance_outcome_embedding, latent_afterstate], axis=-2)
+        latent_afterstate_with_chance_outcome = chance_outcome_embedding
 
         next_latent_state = self._dynamics_transformer(
             latent_afterstate, latent_afterstate_with_chance_outcome, deterministic=deterministic)
