@@ -77,8 +77,7 @@ def play_episode(args):
     subprocess.run(args=[
         'python3.8',
         os.path.join(nle_path, 'scripts', 'ttyplay2.py'),
-        '-s', f'{args.speed:.3f}', '-a',
-        '-f', args.file,
+        '-s', f'{args.speed:.3f}', '-f', args.file,
     ])
 
 
