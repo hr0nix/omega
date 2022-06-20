@@ -554,7 +554,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     dynamics_fn = functools.partial(train_state.dynamics_fn, deterministic=deterministic)
                     batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(None, 0, 0), out_axes=0)
                     current_latent_states, reward_log_probs = batch_dynamics_fn(
-                        params, current_latent_states, chance_outcome_one_hot_targets)
+                        params, latent_afterstates, chance_outcome_one_hot_targets)
 
                     # Compute prediction losses
                     step_value_loss = rlax.l2_loss(state_values, value_targets)
