@@ -137,18 +137,15 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         """
         chex.assert_rank(latent_state, 2)
 
-        # deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
-        #
-        # latent_state = pytree.expand_dims(latent_state, axis=0)
-        #
-        # chance_outcome_embedding = self._chance_outcome_encoder(latent_state, deterministic=deterministic)
-        #
-        # chex.assert_rank(chance_outcome_embedding, 2)
+        deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        # TODO: remove me
-        return jax.nn.one_hot(0, num_classes=self.num_chance_outcomes, dtype=jnp.float32)
+        latent_state = pytree.expand_dims(latent_state, axis=0)
 
-        #return pytree.squeeze(chance_outcome_embedding, axis=0)
+        chance_outcome_embedding = self._chance_outcome_encoder(latent_state, deterministic=deterministic)
+
+        chex.assert_rank(chance_outcome_embedding, 2)
+
+        return pytree.squeeze(chance_outcome_embedding, axis=0)
 
 
     def representation(self, prev_memory, prev_action, observation, deterministic=None):
