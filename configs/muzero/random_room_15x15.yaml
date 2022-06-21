@@ -22,14 +22,17 @@ agent_config:
   num_train_unroll_steps: 5
   reanalyze_batch_size: 192
   num_train_steps: 8
-  num_mcts_simulations: 30
+  num_mcts_simulations: 40
   mcts_puct_c1: 1.4
   mcts_dirichlet_noise_alpha: 0.35
   mcts_root_exploration_fraction: 0.25
   policy_loss_weight: 1.0
   value_loss_weight: 1.0
+  afterstate_value_loss_weight: 1.0
   reward_loss_weight: 40.0
   state_similarity_loss_weight: 0.001
+  chance_outcome_commitment_loss_weight: 100.0
+  chance_outcome_prediction_loss_weight: 1.0
   reward_values: [-0.01, 0.0, 1.0]
   model_config:
     num_chance_outcomes: 16
