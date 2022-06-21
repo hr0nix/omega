@@ -32,6 +32,7 @@ agent_config:
   state_similarity_loss_weight: 0.001
   reward_values: [-0.01, 0.0, 1.0]
   model_config:
+    num_chance_outcomes: 16
     state_encoder_config:
       glyph_crop_size: [21, 30]
       glyph_embedding_dim: 32
