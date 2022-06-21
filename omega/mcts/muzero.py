@@ -214,34 +214,44 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     parent_is_chance = tree['is_chance'][parent_index]
     local_child_index = get_local_child_index(tree, node_index)
 
+    # We use a sequence of while loops to work around the cond-inside-vmap issue,
+    # which causes both branches of cond to evaluate, wasting precious FLOPs
+    # https://github.com/google/jax/issues/2947#issuecomment-623745670
+
+    child_state = jnp.zeros_like(parent_state)
+    reward = 0.0
+    value = 0.0
+    action_log_probs = jnp.zeros(get_num_actions(tree), dtype=jnp.float32)
+    chance_outcome_log_probs = jnp.zeros(get_num_chance_outcomes(tree), dtype=jnp.float32)
+
+    def chance_node_expansion_cond(loop_state):
+        is_first_iter = loop_state[-1]
+        return jnp.logical_and(parent_is_chance, is_first_iter)
     def chance_node_expansion(_):
-        # Dynamics takes chance outcome input as onehot because it needs to be differentiable
         num_chance_outcomes = get_num_chance_outcomes(tree)
         chance_outcome_one_hot = jax.nn.one_hot(local_child_index, num_classes=num_chance_outcomes, dtype=jnp.float32)
         child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot)
         action_log_probs, value = prediction_fn(child_state)
-        chance_outcome_log_probs = jnp.zeros(num_chance_outcomes, dtype=jnp.float32)
-        is_chance = False
-        return child_state, reward, value, action_log_probs, chance_outcome_log_probs, is_chance
+        return child_state, reward, value, action_log_probs, False
+    child_state, reward, value, action_log_probs, _ = jax.lax.while_loop(
+        cond_fun=chance_node_expansion_cond, body_fun=chance_node_expansion,
+        init_val=(child_state, reward, value, action_log_probs, True)
+    )
 
+    def regular_node_expansion_cond(loop_state):
+        is_first_iter = loop_state[-1]
+        return jnp.logical_and(jnp.logical_not(parent_is_chance), is_first_iter)
     def regular_node_expansion(_):
         afterstate = afterstate_dynamics_fn(parent_state, local_child_index)
         chance_outcome_log_probs, value = afterstate_prediction_fn(afterstate)
-        action_log_probs = jnp.zeros(get_num_actions(tree), dtype=jnp.float32)
-        reward = 0.0
-        is_chance = True
-        return afterstate, reward, value, action_log_probs, chance_outcome_log_probs, is_chance
-
-    # We don't want tree update under lax.cond as jax executes both branches and thus cannot make the update in-place
-    child_state, reward, value, action_log_probs, chance_outcome_log_probs, is_chance = jax.lax.cond(
-        pred=parent_is_chance,
-        true_fun=chance_node_expansion,
-        false_fun=regular_node_expansion,
-        operand=None,
+        return afterstate, value, chance_outcome_log_probs, False
+    child_state, value, chance_outcome_log_probs, _ = jax.lax.while_loop(
+        cond_fun=regular_node_expansion_cond, body_fun=regular_node_expansion,
+        init_val=(child_state, value, chance_outcome_log_probs, True)
     )
 
     return init_node(
-        tree, node_index, is_chance=is_chance, state=child_state, value=value, reward=reward,
+        tree, node_index, is_chance=jnp.logical_not(parent_is_chance), state=child_state, value=value, reward=reward,
         action_prior_log_probs=action_log_probs, chance_outcome_prior_log_probs=chance_outcome_log_probs,
         rng=init_node_key,
         dirichlet_noise_alpha=1.0, exploration_fraction=0.0,  # No exploration in nodes other than root
