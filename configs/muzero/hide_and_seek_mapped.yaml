@@ -1,0 +1,68 @@
+train_config:
+  num_days: 30000
+  epoch_every_num_days: 10
+  num_collection_steps: 16
+  num_workers: 2
+  num_envs: 32
+  env_name: 'MiniHack-HideNSeek-Mapped-v0'
+  observation_keys: ['glyphs']
+  agent_type: 'muzero'
+  replay_buffer:
+    type: uniform_over_good_and_bad
+    cluster_buffer:
+      type: max_age
+      max_buffer_size: 50000
+      max_age: 1000
+    good_total_reward_threshold: 0.5
+agent_config:
+  use_priorities: false
+  lr: 0.001
+  max_gradient_norm: 5.0
+  discount_factor: 0.95
+  num_train_unroll_steps: 5
+  reanalyze_batch_size: 192
+  num_train_steps: 8
+  num_mcts_simulations: 40
+  mcts_puct_c1: 1.4
+  mcts_dirichlet_noise_alpha: 0.35
+  mcts_root_exploration_fraction: 0.25
+  mcts_search_policy: pi_bar
+  mcts_result_policy: pi_bar
+  policy_loss_weight: 1.0
+  value_loss_weight: 1.0
+  afterstate_value_loss_weight: 1.0
+  reward_loss_weight: 5.0
+  state_similarity_loss_weight: 0.001
+  chance_outcome_commitment_loss_weight: 100.0
+  chance_outcome_prediction_loss_weight: 1.0
+  reward_values: [-0.01, 0.0, 1.0]
+  model_config:
+    num_chance_outcomes: 16
+    state_encoder_config:
+      glyph_crop_size: [21, 30]
+      glyph_embedding_dim: 32
+      num_memory_units: 8
+      memory_dim: 32
+      memory_update_num_heads: 8
+      map_attention_num_heads: 2
+      num_perceiver_blocks: 1
+      num_perceiver_self_attention_subblocks: 2
+      transformer_fc_inner_dim: 128
+      use_bl_stats: false
+      use_fixed_positional_embeddings: false
+    scalar_predictor_config:
+      transformer_num_blocks: 2
+      transformer_num_heads: 2
+      transformer_fc_inner_dim: 128
+    action_outcome_predictor_config:
+      transformer_num_blocks: 2
+      transformer_num_heads: 2
+      transformer_fc_inner_dim: 128
+    dynamics_transformer_config:
+      num_blocks: 2
+      num_heads: 4
+      fc_inner_dim: 128
+    memory_aggregator_config:
+      num_blocks: 2
+      num_heads: 4
+      fc_inner_dim: 128
