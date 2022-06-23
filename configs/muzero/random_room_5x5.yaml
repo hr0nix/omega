@@ -26,6 +26,8 @@ agent_config:
   mcts_puct_c1: 1.4
   mcts_dirichlet_noise_alpha: 0.35
   mcts_root_exploration_fraction: 0.25
+  mcts_search_policy: pi_bar
+  mcts_result_policy: pi_bar
   policy_loss_weight: 1.0
   value_loss_weight: 1.0
   afterstate_value_loss_weight: 1.0

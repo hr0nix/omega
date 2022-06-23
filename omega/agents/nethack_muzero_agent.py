@@ -669,7 +669,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             },
         })
         reanalyze_stats = {
-            'reanalyze_avg_msts_policy_entropy': jnp.mean(
+            'reanalyze_avg_mcts_policy_entropy': jnp.mean(
                 jax.vmap(jax.vmap(entropy))(trajectory_batch['mcts_reanalyze']['log_action_probs'])
             ),
             'reanalyze_avg_mcts_state_value': jnp.mean(trajectory_batch['mcts_reanalyze']['state_values']),
