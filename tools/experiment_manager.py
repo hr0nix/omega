@@ -33,7 +33,7 @@ def run_experiment(args):
 
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
-    env['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+    env['CUDA_VISIBLE_DEVICES'] = args.gpu
     subprocess.run(env=env, args=[
         'python3.8', os.path.join(cur_dir, 'agent.py'), 'train',
         '--config', os.path.join(args.dir, CONFIG_FILENAME),
@@ -77,8 +77,7 @@ def play_episode(args):
     subprocess.run(args=[
         'python3.8',
         os.path.join(nle_path, 'scripts', 'ttyplay2.py'),
-        '-s', f'{args.speed:.3f}', '-a',
-        '-f', args.file,
+        '-s', f'{args.speed:.3f}', '-f', args.file,
     ])
 
 
@@ -93,7 +92,7 @@ def parse_args():
 
     run_parser = subparsers.add_parser('run', help='Run an experiment')
     run_parser.add_argument('--dir', metavar='DIR', dest='dir', required=True, type=str)
-    run_parser.add_argument('--gpu', metavar='GPU_INDEX', dest='gpu', required=False, type=int, default=0)
+    run_parser.add_argument('--gpu', metavar='GPU_NAME_OR_INDEX', dest='gpu', required=False, type=str, default='0')
     run_parser.set_defaults(func=run_experiment)
 
     cleanup_parser = subparsers.add_parser('cleanup', help='Cleanup an experiment dir')

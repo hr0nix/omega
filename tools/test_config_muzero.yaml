@@ -25,6 +25,7 @@ agent_config:
   num_mcts_simulations: 2
   reward_values: [-0.01, 0.0, -1.0, 1.0]
   model_config:
+    num_chance_outcomes: 16
     state_encoder_config:
       num_memory_units: 3
       memory_dim: 16
@@ -36,7 +37,7 @@ agent_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
-    policy_network_config:
+    action_outcome_predictor_config:
       transformer_num_blocks: 1
       transformer_num_heads: 1
       transformer_fc_inner_dim: 16
