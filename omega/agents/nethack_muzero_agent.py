@@ -37,6 +37,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'mcts_puct_c1': 1.25,
         'mcts_dirichlet_noise_alpha': 0.2,
         'mcts_root_exploration_fraction': 0.2,
+        'mcts_search_policy': 'puct',
+        'mcts_result_policy': 'visit_count',
         'num_train_unroll_steps': 5,
         'num_train_steps': 1,
         'reanalyze_batch_size': 8,
@@ -407,6 +409,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             puct_c1=self._config['mcts_puct_c1'],
             dirichlet_noise_alpha=self._config['mcts_dirichlet_noise_alpha'],
             root_exploration_fraction=self._config['mcts_root_exploration_fraction'],
+            search_policy=self._config['mcts_search_policy'],
+            result_policy=self._config['mcts_result_policy'],
         )
         trajectory_mcts = jax.vmap(mcts_func)
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
@@ -577,8 +581,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     chance_outcome_prediction_loss += jnp.sum(
                         next_state_valid_mask * step_chance_outcome_prediction_loss) * next_state_valid_scale
 
-                    # Compute state similarity loss loosely inspired by EfficientZero paper
-                    # https://arxiv.org/abs/2111.00210
+                    # Compute state similarity loss following "Improving Model-Based Reinforcement Learning
+                    # with Internal State Representations through Self-Supervision",
+                    # https://arxiv.org/abs/2102.05599
                     # TODO: use a BYOL-like method here
                     step_state_similarity_loss = jnp.mean(
                         rlax.l2_loss(current_latent_states, state_targets),

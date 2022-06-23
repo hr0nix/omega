@@ -103,28 +103,51 @@ class SimpleBandit:
         return np.asarray(afterstate, dtype=np.int32)
 
 
-def _test_bandit(bandit, expected_arm_values):
+def _test_bandit(
+        bandit,
+        expected_arm_values,
+        search_policy='puct',
+        result_policy='visit_count',
+        num_simulations=60,
+):
     with jax.disable_jit():
         policy_log_probs, value, _ = mcts(
             initial_state=bandit.initial_state,
-            rng=jax.random.PRNGKey(32167),
+            rng=jax.random.PRNGKey(31337),
             prediction_fn=bandit.prediction,
             dynamics_fn=bandit.dynamics,
             afterstate_prediction_fn=bandit.afterstate_prediction,
             afterstate_dynamics_fn=bandit.afterstate_dynamics,
             num_actions=bandit.num_actions,
             num_chance_outcomes=bandit.num_outcomes,
-            num_simulations=100,
+            num_simulations=num_simulations,
             discount_factor=1.0,
             puct_c1=1.4,
             dirichlet_noise_alpha=0.35,
             root_exploration_fraction=0.25,
+            search_policy=search_policy,
+            result_policy=result_policy,
         )
         policy_probs = np.exp(policy_log_probs)
         assert np.argmax(policy_probs) == np.argmax(expected_arm_values)
         assert np.abs(value - np.sum(policy_probs * expected_arm_values)) < 0.01
 
 
+def test_simple_bandit_puct():
+    _test_bandit(
+        SimpleBandit(),
+        expected_arm_values=[-0.05, 0.1],
+        search_policy='puct',
+        result_policy='visit_count',
+        num_simulations=60,
+    )
 
-def test_simple_bandit():
-    _test_bandit(SimpleBandit(), expected_arm_values=[-0.05, 0.1])
+
+def test_simple_bandit_pi_bar():
+    _test_bandit(
+        SimpleBandit(),
+        expected_arm_values=[-0.05, 0.1],
+        search_policy='pi_bar',
+        result_policy='pi_bar',
+        num_simulations=40,
+    )
