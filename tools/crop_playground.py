@@ -8,10 +8,10 @@ from omega.training.env_wrapper import EnvWrapper
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-AvoidFuzzyBear-v0'
+ENV_NAME = 'MiniHack-CorridorBattle-v0'
 NUM_STEPS = 50
-GLYPH_CROP_START = [0, 0]
-GLYPH_CROP_AREA = [21, 20]
+GLYPH_CROP_START = None #[0, 0]
+GLYPH_CROP_AREA = [21, 40]
 
 
 def generate_random_action(env):
@@ -50,7 +50,7 @@ def print_cropped_observation(env):
 
 
 def main():
-    env = gym.make(ENV_NAME)
+    env = gym.make(ENV_NAME, disable_env_checker=True)
     env = EnvWrapper(env)
     env.reset()
     for step in range(NUM_STEPS):
