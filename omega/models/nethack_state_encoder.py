@@ -2,11 +2,11 @@ from typing import Optional, Tuple
 
 import flax.linen as nn
 import jax.numpy as jnp
-import jax.random
 
 import nle.nethack
 
 from omega.neural import TransformerNet, CrossTransformerNet, DenseNet
+from omega.math import log_transform
 
 from .base import ItemEmbedder
 
@@ -21,6 +21,7 @@ class PerceiverNethackStateEncoder(nn.Module):
     num_memory_units: int = 128
     memory_dim: int = 64
     use_bl_stats: bool = True
+    bl_stats_log_transform: bool = False
     num_bl_stats_blocks: int = 2
     num_perceiver_blocks: int = 2
     num_perceiver_self_attention_subblocks: int = 2
@@ -58,7 +59,8 @@ class PerceiverNethackStateEncoder(nn.Module):
             name='glyph_embedder',
         )
         self._memory_embedder = ItemEmbedder(
-            num_items=self.num_memory_units,
+            # bl_stats will add an extra memory unit
+            num_items=self.num_memory_units - (1 if self.use_bl_stats else 0),
             embedding_dim=self.memory_dim,
             name='memory_embedder',
         )
@@ -142,12 +144,16 @@ class PerceiverNethackStateEncoder(nn.Module):
             glyphs = glyphs[:, start_r:start_r + self.glyph_crop_size[0], start_c:start_c + self.glyph_crop_size[1]]
 
         # Perceiver latent memory embeddings
+        # TODO: use prev memory here if specified
         memory = self._memory_embedder(batch_size)
 
         if self.use_bl_stats:
             bl_stats = current_state_batch['blstats']
+            if self.bl_stats_log_transform:
+                bl_stats = log_transform(bl_stats)
             bl_stats = self._bl_stats_network(bl_stats)
-            memory = memory + jnp.expand_dims(bl_stats, axis=1)  # Add global features to every memory cell
+            # Add bl stats as an extra memory cell
+            memory = jnp.concatenate([memory, jnp.expand_dims(bl_stats, axis=1)], axis=1)
 
         # Observed glyph embeddings
         glyphs = jnp.reshape(glyphs, newshape=(glyphs.shape[0], -1))

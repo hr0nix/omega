@@ -5,7 +5,7 @@ train_config:
   num_envs: 1
   num_workers: 1
   env_name: 'MiniHack-MemoryTest-6-v0'
-  observation_keys: ['glyphs']
+  observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -31,7 +31,8 @@ agent_config:
       memory_dim: 16
       glyph_embedding_dim: 16
       use_fixed_positional_embeddings: false
-      use_bl_stats: false
+      use_bl_stats: true
+      bl_stats_log_transform: true
       glyph_crop_size: [5, 5]
     scalar_predictor_config:
       transformer_num_blocks: 1

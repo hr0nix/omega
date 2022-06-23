@@ -43,6 +43,7 @@ class DenseNet(nn.Module):
         t = self._input_dense(input)
         for block_idx in range(self.num_blocks):
             t_prev = t
+            # TODO: pre-norm here?
             t = self._dense[block_idx](t)
             t = self._activation(t)
             t = self._norm[block_idx](t)
