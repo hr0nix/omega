@@ -2,9 +2,8 @@ import abc
 from functools import partial
 
 import jax
-import numpy as np
 
-from ..training.batched_env_stepper import BatchedEnvStepper
+from ..utils.gym import RayEnvStepper, StayInTerminalStateWrapper, AutoResetWrapper
 from ..utils import pytree
 from ..utils.profiling import timeit
 
@@ -12,15 +11,23 @@ from ..utils.profiling import timeit
 class Trainer(abc.ABC):
     def __init__(self, agent, env_factory, num_envs, num_collection_steps, num_workers):
         self._agent = agent
-        self._env_factory = env_factory
         self._num_collection_steps = num_collection_steps
         self._num_envs = num_envs
 
-        self._batched_env_stepper = BatchedEnvStepper(self._env_factory, num_envs, num_workers)
+        def _env_factory():
+            env = env_factory()
+            # Allow to act in terminal states
+            env = StayInTerminalStateWrapper(env)
+            # Automatically reset after acting in terminal state once
+            env = AutoResetWrapper(env)
+            return env
+
+        self._batched_env_stepper = RayEnvStepper(_env_factory, num_envs, num_workers)
         self._current_episode_indices = list(range(num_envs))
         self._next_episode_index = num_envs
 
         self._agent_memory = self._agent.init_memory_batch(num_envs)
+        self._current_state_batch_np = self._batched_env_stepper.reset()
 
     @property
     def agent(self):
@@ -40,9 +47,8 @@ class Trainer(abc.ABC):
         transition_batches = []
 
         for step in range(self.num_collection_steps):
-            current_state_batch_np = self._batched_env_stepper.get_current_state()
             action_batch_jax, act_metadata_batch_jax = self.agent.act_on_batch(
-                current_state_batch_np, self._agent_memory)
+                self._current_state_batch_np, self._agent_memory)
             # Copy actions back to CPU because indexing GPU memory will slow everything down significantly
             action_batch_np = pytree.to_numpy(action_batch_jax)
             reward_done_next_state_batch_np = self._batched_env_stepper.step(action_batch_np)
@@ -65,7 +71,7 @@ class Trainer(abc.ABC):
             transition_batches.append(
                 dict(
                     memory_before=self._agent_memory,
-                    current_state=current_state_batch_np,
+                    current_state=self._current_state_batch_np,
                     actions=action_batch_jax,
                     act_metadata=act_metadata_batch_jax,
                     **reward_done_next_state_batch_jax,
@@ -78,6 +84,8 @@ class Trainer(abc.ABC):
                 actions=action_batch_jax,
                 done=reward_done_next_state_batch_jax['done'],
             )
+
+            self._current_state_batch_np = reward_done_next_state_batch_np['next_state']
 
         return self._stack_transition_batches(transition_batches)
 
