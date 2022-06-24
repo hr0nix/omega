@@ -77,6 +77,16 @@ class PerceiverNethackStateEncoder(nn.Module):
             )
             for block_idx in range(self.num_perceiver_blocks)
         ]
+        self._attention_to_prev_memory_block = CrossTransformerNet(
+            num_blocks=1,
+            dim=self.memory_dim,
+            fc_inner_dim=self.transformer_fc_inner_dim,
+            use_gating=self.transformer_use_gating,
+            num_heads=self.memory_update_num_heads,
+            dropout_rate=self.transformer_dropout,
+            deterministic=self.deterministic,
+            name='attention_to_prev_memory',
+        )
         self._map_attention_blocks = [
             CrossTransformerNet(
                 num_blocks=1,
@@ -128,7 +138,7 @@ class PerceiverNethackStateEncoder(nn.Module):
 
         return pos_embeddings
 
-    def __call__(self, current_state_batch, deterministic=None):
+    def __call__(self, current_state_batch, prev_memory=None, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
         glyphs = current_state_batch['glyphs']
@@ -143,8 +153,7 @@ class PerceiverNethackStateEncoder(nn.Module):
                 start_c = (nle.nethack.DUNGEON_SHAPE[1] - self.glyph_crop_size[1]) // 2
             glyphs = glyphs[:, start_r:start_r + self.glyph_crop_size[0], start_c:start_c + self.glyph_crop_size[1]]
 
-        # Perceiver latent memory embeddings
-        # TODO: use prev memory here if specified
+        # Initialize Perceiver latent memory embeddings
         memory = self._memory_embedder(batch_size)
 
         if self.use_bl_stats:
@@ -154,6 +163,11 @@ class PerceiverNethackStateEncoder(nn.Module):
             bl_stats = self._bl_stats_network(bl_stats)
             # Add bl stats as an extra memory cell
             memory = jnp.concatenate([memory, jnp.expand_dims(bl_stats, axis=1)], axis=1)
+
+        # If a memory context is specified, update memory by attending to it.
+        # This allows for context-dependent state encoding
+        if prev_memory is not None:
+            memory = self._attention_to_prev_memory_block(memory, prev_memory, deterministic=deterministic)
 
         # Observed glyph embeddings
         glyphs = jnp.reshape(glyphs, newshape=(glyphs.shape[0], -1))

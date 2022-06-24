@@ -26,12 +26,17 @@ agent_config:
   reward_values: [-0.01, 0.0, -1.0, 1.0]
   model_config:
     num_chance_outcomes: 16
+    context_dependent_state_encoder: true
     state_encoder_config:
+      num_perceiver_blocks: 1
+      num_perceiver_self_attention_subblocks: 1
       num_memory_units: 3
       memory_dim: 16
       glyph_embedding_dim: 16
+      transformer_fc_inner_dim: 16
       use_fixed_positional_embeddings: false
       use_bl_stats: true
+      num_bl_stats_blocks: 1
       bl_stats_log_transform: true
       glyph_crop_size: [5, 5]
     scalar_predictor_config:

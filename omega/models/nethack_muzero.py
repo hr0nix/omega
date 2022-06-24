@@ -46,6 +46,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
     num_actions: int
     num_chance_outcomes: int
     reward_dim: int
+    context_dependent_state_encoder: bool = False
     state_encoder_config: Dict = field(default_factory=dict)
     memory_aggregator_config: Dict = field(default_factory=lambda: {
         'num_blocks': 2,
@@ -161,7 +162,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         prev_memory = pytree.expand_dims(prev_memory, axis=0)
         prev_action = pytree.expand_dims(prev_action, axis=0)
 
-        latent_observation = self._state_encoder(observation, deterministic=deterministic)
+        latent_observation = self._state_encoder(
+            observation,
+            prev_memory=prev_memory if self.context_dependent_state_encoder else None,
+            deterministic=deterministic
+        )
 
         # Fuse prev action embedding with prev memory
         prev_action_embedding = self._action_embedder(prev_action)
