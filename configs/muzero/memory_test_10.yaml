@@ -5,7 +5,7 @@ train_config:
   num_workers: 2
   num_envs: 32
   env_name: 'MiniHack-MemoryTest-10-v0'
-  observation_keys: ['glyphs']
+  observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'
   replay_buffer:
     type: uniform_over_good_and_bad
@@ -34,10 +34,12 @@ agent_config:
   afterstate_value_loss_weight: 1.0
   reward_loss_weight: 5.0
   state_similarity_loss_weight: 0.001
+  state_similarity_loss_stop_gradient: false
   chance_outcome_commitment_loss_weight: 100.0
   chance_outcome_prediction_loss_weight: 1.0
   model_config:
     num_chance_outcomes: 16
+    context_dependent_state_encoder: false
     state_encoder_config:
       glyph_crop_start: [0, 0]
       glyph_crop_size: [21, 20]
@@ -49,7 +51,7 @@ agent_config:
       num_perceiver_blocks: 1
       num_perceiver_self_attention_subblocks: 2
       transformer_fc_inner_dim: 128
-      use_bl_stats: false
+      use_bl_stats: true
       use_fixed_positional_embeddings: false
     scalar_predictor_config:
       transformer_num_blocks: 2
