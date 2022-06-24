@@ -49,6 +49,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'afterstate_value_loss_weight': 1.0,
         'reward_loss_weight': 10.0,
         'state_similarity_loss_weight': 0.001,
+        'state_similarity_loss_stop_gradient': False,
         'max_gradient_norm': 1000.0,
         'act_deterministic': False,
         'reanalyze_deterministic': False,
@@ -526,11 +527,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     afterstate_value_targets = trajectory['training_targets']['afterstate_value'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['rewards_one_hot'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
-                    # TODO: is it worth adding stop_gradient for state_targets here?
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
+                    if self._config['state_similarity_loss_stop_gradient']:
+                        state_targets = jax.lax.stop_gradient(state_targets)
                     chance_outcome_one_hot_targets = chance_outcomes_one_hot_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
                     # When there's no next state in trajectory due to termination,
                     # we use an arbitrary chance outcome (zero)
+                    # TODO: it's incorrect to fix chance transition to the terminal state, do something!
                     chance_outcome_one_hot_targets = (
                         chance_outcome_one_hot_targets * (1 - next_state_is_terminal_or_after_extra_dim) +
                         jax.nn.one_hot(0, num_chance_outcomes, dtype=jnp.float32) * next_state_is_terminal_or_after_extra_dim
@@ -586,8 +589,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # https://arxiv.org/abs/2102.05599
                     # TODO: use a BYOL-like method here
                     step_state_similarity_loss = jnp.mean(
-                        rlax.l2_loss(current_latent_states, state_targets),
-                        axis=(-2, -1))
+                        rlax.l2_loss(current_latent_states, state_targets), axis=(-2, -1))
                     # We don't have targets at the end of a trajectory
                     # We also don't have next state targets for terminal states or anything after
                     state_similarity_loss_mask = next_state_valid_mask * (1.0 - next_state_is_terminal_or_after)
