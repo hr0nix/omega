@@ -512,6 +512,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 policy_loss = 0.0
                 chance_outcome_prediction_loss = 0.0
                 state_similarity_loss = 0.0
+                state_avg_sqr = 0.0
                 current_latent_states = trajectory_latent_states
                 for unroll_step in range(num_unroll_steps):  # TODO: lax.fori ?
                     current_state_valid_mask = jnp.arange(0, num_timestamps) < num_timestamps - unroll_step
@@ -598,6 +599,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         (jnp.sum(state_similarity_loss_mask) + 1e-10)  # Just in case
                     )
 
+                    state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
+
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
                 value_loss /= num_unroll_steps
@@ -623,6 +626,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'chance_outcome_prediction_loss': chance_outcome_prediction_loss,
                     'chance_outcome_commitment_loss': chance_outcome_commitment_loss,
                     'state_similarity_loss': state_similarity_loss,
+                    'state_avg_sqr': state_avg_sqr,
                     'muzero_loss': loss,
                 }
 
