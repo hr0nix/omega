@@ -47,6 +47,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
     num_chance_outcomes: int
     reward_dim: int
     context_dependent_state_encoder: bool = False
+    normalize_state: bool = False
     state_encoder_config: Dict = field(default_factory=dict)
     memory_aggregator_config: Dict = field(default_factory=lambda: {
         'num_blocks': 2,
@@ -122,6 +123,15 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             **self.action_outcome_predictor_config,
             name='policy_network')
 
+    def _maybe_normalize_state(self, state):
+        if not self.normalize_state:
+            return state
+
+        # TODO: we normalize each memory cell independently, maybe we should normalize jointly
+        max = jnp.max(state, axis=-1, keepdims=True)
+        min = jnp.min(state, axis=-1, keepdims=True)
+        return (state - min) / (max - min + 1e-6)
+
     def latent_state_shape(self):
         return self._state_encoder.num_memory_units, self._state_encoder.memory_dim
 
@@ -176,6 +186,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         # Attend from latent observation to prev memory
         representation = self._memory_aggregator(
             latent_observation, prev_memory_with_action, deterministic=deterministic)
+        representation = self._maybe_normalize_state(representation)
 
         chex.assert_rank(representation, 3)
         chex.assert_axis_dimension(representation, 0, 1)
@@ -205,6 +216,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         latent_afterstate = self._afterstate_dynamics_transformer(
             previous_latent_state, previous_latent_state_with_action, deterministic=deterministic)
+        latent_afterstate = self._maybe_normalize_state(latent_afterstate)
 
         chex.assert_rank(latent_afterstate, 3)
         return pytree.squeeze(latent_afterstate, axis=0)
@@ -228,6 +240,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         next_latent_state = self._dynamics_transformer(
             latent_afterstate, latent_afterstate_with_chance_outcome, deterministic=deterministic)
+        next_latent_state = self._maybe_normalize_state(next_latent_state)
 
         log_reward_probs = self._reward_predictor(
             latent_afterstate_with_chance_outcome, deterministic=deterministic)

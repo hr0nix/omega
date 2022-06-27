@@ -27,6 +27,7 @@ agent_config:
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: true
+    normalize_state: true
     state_encoder_config:
       num_perceiver_blocks: 1
       num_perceiver_self_attention_subblocks: 1
