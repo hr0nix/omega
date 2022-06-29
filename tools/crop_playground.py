@@ -3,17 +3,29 @@ import minihack
 import nle.nethack
 import omega.minihack.envs
 
+from omega.utils.gym import StayInTerminalStateWrapper, AutoResetWrapper
+
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-CorridorBattle-v0'
+ENV_NAME = 'MiniHack-Retreat-v0'
 NUM_STEPS = 50
-GLYPH_CROP_START = None #[0, 0]
-GLYPH_CROP_AREA = [21, 40]
+GLYPH_CROP_START = [0, 0]
+GLYPH_CROP_AREA = [10, 10]
 
 
 def generate_random_action(env):
     return np.random.randint(low=0, high=env.action_space.n)
+
+
+def read_action_index(env):
+    action_index = None
+    while action_index is None:
+        action_index = int(input('Provide action index: '))
+        if action_index < 0 or action_index >= env.action_space.n:
+            print('Invalid action index')
+            action_index = None
+    return action_index
 
 
 def crop_observation(observation):
@@ -47,15 +59,23 @@ def print_cropped_observation(state):
     print_observation(cropped_chars_observation)
 
 
+def print_message(observation):
+    message_text = bytes(observation['message']).decode('ascii').replace('\0', '')
+    print(f'Message: "{message_text}"')
+
+
 def main():
     env = gym.make(ENV_NAME, disable_env_checker=True)
+    env = StayInTerminalStateWrapper(env)
+    env = AutoResetWrapper(env)
+
     observation = env.reset()
     for step in range(NUM_STEPS):
         print_cropped_observation(observation)
-        observation, _, done, _ = env.step(generate_random_action(env))
-        if done:
-            env.reset()
-
+        action_index = read_action_index(env)
+        observation, reward, done, _ = env.step(action_index)
+        print_message(observation)
+        print(f'Reward obtained: {reward:0.000}, done={done}')
 
 if __name__ == '__main__':
     main()
