@@ -71,6 +71,7 @@ def train_agent(args):
         num_workers=train_config['num_workers'],
         num_envs=train_config['num_envs'],
         num_collection_steps=train_config['num_collection_steps'],
+        allow_to_act_in_terminal_state_once=train_config['allow_to_act_in_terminal_state_once'],
     )
 
     start_day = 0

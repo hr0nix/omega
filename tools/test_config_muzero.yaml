@@ -4,6 +4,7 @@ train_config:
   num_collection_steps: 3
   num_envs: 1
   num_workers: 1
+  allow_to_act_in_terminal_state_once: false
   env_name: 'MiniHack-MemoryTest-6-v0'
   observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'

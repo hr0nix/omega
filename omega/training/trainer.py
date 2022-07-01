@@ -9,15 +9,18 @@ from ..utils.profiling import timeit
 
 
 class Trainer(abc.ABC):
-    def __init__(self, agent, env_factory, num_envs, num_collection_steps, num_workers):
+    def __init__(
+            self, agent, env_factory, num_envs, num_collection_steps, num_workers,
+            allow_to_act_in_terminal_state_once=False):
         self._agent = agent
         self._num_collection_steps = num_collection_steps
         self._num_envs = num_envs
 
         def _env_factory():
             env = env_factory()
-            # Allow to act in terminal states
-            env = StayInTerminalStateWrapper(env)
+            if allow_to_act_in_terminal_state_once:
+                # Allow to act in terminal states
+                env = StayInTerminalStateWrapper(env)
             # Automatically reset after acting in terminal state once
             env = AutoResetWrapper(env)
             return env
