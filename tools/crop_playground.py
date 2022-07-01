@@ -3,19 +3,29 @@ import minihack
 import nle.nethack
 import omega.minihack.envs
 
-from omega.training.env_wrapper import EnvWrapper
+from omega.utils.gym import StayInTerminalStateWrapper, AutoResetWrapper
 
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-CorridorBattle-v0'
+ENV_NAME = 'MiniHack-Retreat-v0'
 NUM_STEPS = 50
-GLYPH_CROP_START = None #[0, 0]
-GLYPH_CROP_AREA = [21, 40]
+GLYPH_CROP_START = [0, 0]
+GLYPH_CROP_AREA = [10, 10]
 
 
 def generate_random_action(env):
     return np.random.randint(low=0, high=env.action_space.n)
+
+
+def read_action_index(env):
+    action_index = None
+    while action_index is None:
+        action_index = int(input('Provide action index: '))
+        if action_index < 0 or action_index >= env.action_space.n:
+            print('Invalid action index')
+            action_index = None
+    return action_index
 
 
 def crop_observation(observation):
@@ -28,37 +38,44 @@ def crop_observation(observation):
     return observation[start_r:start_r + GLYPH_CROP_AREA[0], start_c:start_c + GLYPH_CROP_AREA[1]]
 
 
-def print_observation(observation):
-    assert len(observation.shape) == 2
-    for c in range(observation.shape[1] + 2):
+def print_observation(chars_observation):
+    assert len(chars_observation.shape) == 2
+    for c in range(chars_observation.shape[1] + 2):
         print('X', end='')
     print('\n')
-    for r in range(observation.shape[0]):
+    for r in range(chars_observation.shape[0]):
         print('X', end='')
-        for c in range(observation.shape[1]):
-            print(chr(observation[r][c]), end='')
+        for c in range(chars_observation.shape[1]):
+            print(chr(chars_observation[r][c]), end='')
         print('X\n')
-    for c in range(observation.shape[1] + 2):
+    for c in range(chars_observation.shape[1] + 2):
         print('X', end='')
     print('\n')
 
 
-def print_cropped_observation(env):
-    observation = env.current_state['chars']
-    cropped_observation = crop_observation(observation)
-    print_observation(cropped_observation)
+def print_cropped_observation(state):
+    chars_observation = state['chars']
+    cropped_chars_observation = crop_observation(chars_observation)
+    print_observation(cropped_chars_observation)
+
+
+def print_message(observation):
+    message_text = bytes(observation['message']).decode('ascii').replace('\0', '')
+    print(f'Message: "{message_text}"')
 
 
 def main():
     env = gym.make(ENV_NAME, disable_env_checker=True)
-    env = EnvWrapper(env)
-    env.reset()
-    for step in range(NUM_STEPS):
-        print_cropped_observation(env)
-        _, _, done, _ = env.step(generate_random_action(env))
-        if done:
-            env.reset()
+    env = StayInTerminalStateWrapper(env)
+    env = AutoResetWrapper(env)
 
+    observation = env.reset()
+    for step in range(NUM_STEPS):
+        print_cropped_observation(observation)
+        action_index = read_action_index(env)
+        observation, reward, done, _ = env.step(action_index)
+        print_message(observation)
+        print(f'Reward obtained: {reward:0.000}, done={done}')
 
 if __name__ == '__main__':
     main()

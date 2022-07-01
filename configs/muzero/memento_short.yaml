@@ -4,6 +4,7 @@ train_config:
   num_collection_steps: 16
   num_workers: 2
   num_envs: 32
+  allow_to_act_in_terminal_state_once: false
   env_name: 'MiniHack-Memento-Short-F2-v0'
   observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'

@@ -1,0 +1,13 @@
+MAZE: "mylevel",' '
+INIT_MAP:solidfill,' '
+GEOMETRY:left,top
+MAP
+-------
+|.....|
+|.....|
+|.....|
+-------
+ENDMAP
+REGION: (0,0,20,20), lit, "ordinary"
+MONSTER: "killer bee", (3,1)
+BRANCH: (1,1,1,1), (1,2,1,2)

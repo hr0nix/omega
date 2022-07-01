@@ -5,7 +5,7 @@ train_config:
   num_workers: 2
   num_envs: 32
   allow_to_act_in_terminal_state_once: false
-  env_name: 'MiniHack-MemoryTest-10-v0'
+  env_name: 'MiniHack-Retreat-v0'
   observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'
   replay_buffer:
@@ -17,7 +17,7 @@ train_config:
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
-  reward_values: [-0.01, 0.0, -1.0, 1.0]
+  reward_values: [-0.01, 0.0, 1.0, 2.0]
   lr: 0.001
   max_gradient_norm: 5.0
   discount_factor: 0.95
@@ -43,7 +43,7 @@ agent_config:
     context_dependent_state_encoder: false
     state_encoder_config:
       glyph_crop_start: [0, 0]
-      glyph_crop_size: [21, 20]
+      glyph_crop_size: [10, 10]
       glyph_embedding_dim: 32
       num_memory_units: 8
       memory_dim: 32
