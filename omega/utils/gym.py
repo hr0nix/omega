@@ -1,9 +1,66 @@
+import os
+
+import array2gif
 import gym
 import ray
 
 import numpy as np
 
+from absl import logging
+from threading import Lock
+
 from . import pytree
+
+
+class NetHackRGBRendering(gym.Wrapper):
+    _env_counter = 0
+    _env_counter_lock = Lock()
+
+    def __init__(self, env, output_dir):
+        super().__init__(env)
+        with NetHackRGBRendering._env_counter_lock:
+            self._id = NetHackRGBRendering._env_counter
+            NetHackRGBRendering._env_counter += 1
+        self._episode_id = 0
+        self._output_dir = output_dir
+        self._frames = []
+
+        self._try_make_output_dir()
+
+    def _try_make_output_dir(self):
+        if os.path.exists(self._output_dir):
+            if not os.path.isdir(self._output_dir):
+                raise RuntimeError(f'Video output destination {self._output_dir} exists, but it is not a directory!')
+            logging.warning(f'Video output dir {self._output_dir} already exists, it contents might get overwritten.')
+        else:
+            os.makedirs(self._output_dir)
+
+    def _record_observation(self, observation):
+        if 'pixel' not in observation:
+            raise RuntimeError('"pixel" must be included in observation keys for RGB rendering to work')
+        self._frames.append(np.transpose(observation['pixel'], axes=(2, 0, 1)))
+
+    def _dump_recording(self):
+        if len(self._frames) == 0:
+            return
+
+        pid = os.getpid()
+        filename = os.path.join(self._output_dir, f'episode.{pid}.env_{self._id}.ep_{self._episode_id}.gif')
+        array2gif.write_gif(self._frames, filename, fps=3)
+
+        self._frames = []
+
+    def reset(self, **kwargs):
+        self._dump_recording()
+        self._episode_id += 1
+        observation = super().reset(**kwargs)
+        self._record_observation(observation)
+        return observation
+
+    def step(self, action):
+        observation, reward, done, info = super().step(action)
+        self._record_observation(observation)
+        return observation, reward, done, info
 
 
 class StayInTerminalStateWrapper(gym.Wrapper):

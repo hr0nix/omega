@@ -13,20 +13,30 @@ from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
 from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
+from omega.utils.gym import NetHackRGBRendering
 from omega.utils.jax import disable_jit_if_no_gpu
 from omega.utils.wandb import get_wandb_id
 
 
-def make_env(train_config, episodes_dir):
+def make_env(train_config, episodes_dir, episode_video_dir):
     # Import custom environments defined in omega
     import omega.minihack.envs  # noqa
 
-    return gym.make(
+    observation_keys = train_config['observation_keys']
+    if episode_video_dir is not None and 'pixel' not in observation_keys:
+        observation_keys.append('pixel')
+
+    env = gym.make(
         train_config['env_name'],
-        observation_keys=train_config['observation_keys'],
+        observation_keys=observation_keys,
         savedir=episodes_dir,
         disable_env_checker=True,
     )
+
+    if episode_video_dir is not None:
+        env = NetHackRGBRendering(env, episode_video_dir)
+
+    return env
 
 
 def load_config(filename):
@@ -62,7 +72,8 @@ def train_agent(args):
     if args.wandb_id_file is not None:
         wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
 
-    env_factory = lambda: make_env(train_config, episodes_dir=args.episodes)
+    env_factory = lambda: make_env(
+        train_config, episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
     env = env_factory()
     agent = create_agent(config, env)
     trainer = OnPolicyTrainer(
@@ -95,7 +106,8 @@ def eval_agent(args):
     ray.init(num_cpus=args.num_parallel_envs)
 
     config = load_config(args.train_config)
-    env_factory = lambda: make_env(config['train_config'], episodes_dir=args.episodes)
+    env_factory = lambda: make_env(
+        config['train_config'], episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
     env = env_factory()
     agent = create_agent(config, env)
     trainer = DummyTrainer(
@@ -125,6 +137,7 @@ def parse_args():
     train_parser.add_argument('--config', metavar='FILE', required=True)
     train_parser.add_argument('--checkpoints', metavar='DIR', required=False)
     train_parser.add_argument('--episodes', metavar='DIR', required=False)
+    train_parser.add_argument('--episode-videos', metavar='DIR', required=False)
     train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
     train_parser.set_defaults(func=train_agent)
 
@@ -132,6 +145,7 @@ def parse_args():
     eval_parser.add_argument('--train-config', metavar='FILE', required=True)
     eval_parser.add_argument('--checkpoints', metavar='DIR', required=True)
     eval_parser.add_argument('--episodes', metavar='DIR', required=False)
+    eval_parser.add_argument('--episode-videos', metavar='DIR', required=False)
     eval_parser.add_argument('--num-steps', metavar='NUM', type=int, default=500, required=False)
     eval_parser.add_argument('--num-workers', metavar='NUM', type=int, default=2, required=False)
     eval_parser.add_argument('--num-parallel-envs', metavar='NUM', type=int, default=32, required=False)
