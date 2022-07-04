@@ -1,6 +1,9 @@
 # omega
 This repo contains and implementation of an agent that can learn to maximise reward in environments with NetHack interface such as [nle](https://github.com/facebookresearch/nle) or [MiniHack](https://github.com/facebookresearch/minihack).
 
+![Crossing a river](/images/river.gif)
+![Fighting monsters in a narrow corridor](/images/corridor.gif)
+
 ## Repo highlights
 * A [Perceiver](http://dpmd.ai/perceiver)-inspired encoder of NetHack states.
 * An implementation of a [PPO](https://arxiv.org/abs/1707.06347)-based RL agent
