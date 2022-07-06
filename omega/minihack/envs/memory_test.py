@@ -3,6 +3,8 @@ import os.path
 from gym.envs import registration
 from minihack import MiniHackNavigation, RewardManager
 
+from omega.utils.gym import EnvCombiner
+
 
 DES_PATH = os.path.join(os.path.dirname(__file__), 'des')
 
@@ -80,6 +82,18 @@ class MiniHackMemoryTest11Steps(MiniHackMemoryTestBase):
         super().__init__(*args, des_file='memory_test_11_steps.des', **kwargs)
 
 
+class MiniHackMemoryTestCombined(EnvCombiner):
+    def __init__(self, **kwargs):
+        super().__init__(
+            env_cls_list=[
+                MiniHackMemoryTest4Steps, MiniHackMemoryTest5Steps, MiniHackMemoryTest6Steps,
+                MiniHackMemoryTest7Steps, MiniHackMemoryTest8Steps, MiniHackMemoryTest9Steps,
+                MiniHackMemoryTest10Steps, MiniHackMemoryTest11Steps,
+            ],
+            **kwargs
+        )
+
+
 registration.register(
     id="MiniHack-CreditAssignmentTest-v0",
     entry_point="omega.minihack.envs:MiniHackCreditAssignmentTest",
@@ -131,4 +145,10 @@ registration.register(
 registration.register(
     id="MiniHack-MemoryTest-11-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest11Steps",
+)
+
+
+registration.register(
+    id="MiniHack-MemoryTest-Combined-v0",
+    entry_point="omega.minihack.envs:MiniHackMemoryTestCombined",
 )

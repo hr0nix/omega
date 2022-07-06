@@ -12,6 +12,38 @@ from threading import Lock
 from . import pytree
 
 
+class EnvCombiner(gym.Env):
+    def __init__(self, env_cls_list, **kwargs):
+        if not env_cls_list:
+            raise ValueError('A non-empty array of wrapped environment names must be provided.')
+
+        self._envs = [
+            env_cls(**kwargs)
+            for env_cls in env_cls_list
+        ]
+
+        self.action_space = self._envs[0].action_space
+        if any(env.action_space != self.action_space for env in self._envs):
+            raise ValueError('Wrapped environments must have the same action space')
+        self.observation_space = self._envs[0].observation_space
+        if any(env.observation_space != self.observation_space for env in self._envs):
+            raise ValueError('Wrapped environments must have the same observation space')
+        self.reward_range = self._envs[0].reward_range
+        if any(env.reward_range != self.reward_range for env in self._envs):
+            raise ValueError('Wrapped environments must have the same reward range')
+
+        self._current_env = None
+
+    def reset(self, *args, **kwargs):
+        self._current_env = np.random.choice(self._envs)
+        return self._current_env.reset(*args, **kwargs)
+
+    def step(self, action):
+        if self._current_env is None:
+            raise RuntimeError('You must reset the environment before stepping.')
+        return self._current_env.step(action)
+
+
 class NetHackRGBRendering(gym.Wrapper):
     _env_counter = 0
     _env_counter_lock = Lock()

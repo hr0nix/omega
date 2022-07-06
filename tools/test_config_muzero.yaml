@@ -5,7 +5,7 @@ train_config:
   num_envs: 1
   num_workers: 1
   allow_to_act_in_terminal_state_once: false
-  env_name: 'MiniHack-MemoryTest-6-v0'
+  env_name: 'MiniHack-MemoryTest-Combined-v0'
   observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'
   replay_buffer:
@@ -13,7 +13,7 @@ train_config:
     cluster_buffer:
       type: max_age
       max_buffer_size: 50000
-      max_age: 1
+      max_age: 10
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
@@ -27,7 +27,7 @@ agent_config:
   reward_values: [-0.01, 0.0, -1.0, 1.0]
   model_config:
     num_chance_outcomes: 16
-    context_dependent_state_encoder: true
+    context_dependent_state_encoder: false
     normalize_state: true
     state_encoder_config:
       num_perceiver_blocks: 1
