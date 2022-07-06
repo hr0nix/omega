@@ -6,6 +6,7 @@ from omega.utils import pytree
 from dataclasses import dataclass, field
 from collections import defaultdict
 from typing import List, Optional
+from functools import reduce
 
 
 @dataclass
@@ -17,6 +18,7 @@ class RunningEpisodeStats(object):
 @dataclass
 class FinishedEpisodeStats(object):
     reward_sum: Optional[float] = None
+    discounted_reward_sum: Optional[float] = None
     num_steps: Optional[int] = None
 
 
@@ -36,8 +38,9 @@ class ExponentialSmoother(object):
 class EvaluationStats(object):
     AVERAGE_REWARD_OVER_NUM_EPISODES = 100
 
-    def __init__(self, rolling_stats_smoothing=0.9):
+    def __init__(self, discount_factor, rolling_stats_smoothing=0.9):
         self._rolling_stats = defaultdict(lambda: ExponentialSmoother(smoothing=rolling_stats_smoothing))
+        self._discount_factor = discount_factor
         self._running_episode_stats = defaultdict(RunningEpisodeStats)
         self._finished_episode_stats = list()
         self._total_steps = 0
@@ -70,6 +73,8 @@ class EvaluationStats(object):
         final_stats = FinishedEpisodeStats()
         final_stats.num_steps = len(stats.rewards)
         final_stats.reward_sum = sum(stats.rewards)
+        final_stats.discounted_reward_sum = reduce(
+            lambda accum, r: r + self._discount_factor * accum, stats.rewards[::-1], 0.0)
         return final_stats
 
     def to_dict(self, include_rolling_stats=False):
@@ -83,6 +88,9 @@ class EvaluationStats(object):
             'last_episode_steps': self._finished_episode_stats[-1].num_steps,
             'last_100_episode_avg_reward': np.mean(
                 [s.reward_sum for s in self._finished_episode_stats[-self.AVERAGE_REWARD_OVER_NUM_EPISODES:]]
+            ),
+            'last_100_episode_avg_discounted_reward': np.mean(
+                [s.discounted_reward_sum for s in self._finished_episode_stats[-self.AVERAGE_REWARD_OVER_NUM_EPISODES:]]
             ),
         }
         if include_rolling_stats:
@@ -110,6 +118,7 @@ class EvaluationStats(object):
             ('Last episode total reward', 'last_episode_total_reward'),
             ('Last episode steps', 'last_episode_steps'),
             ('Last 100 episodes avg reward', 'last_100_episode_avg_reward'),
+            ('Last 100 episodes avg discounted reward', 'last_100_episode_avg_discounted_reward'),
             ('Unique rewards', 'unique_rewards'),
         ]:
             print('  {}: {}'.format(key_title, stats[key]), flush=True)

@@ -90,7 +90,7 @@ def train_agent(args):
         start_day = agent.try_load_from_checkpoint(args.checkpoints)
     logging.info('Starting from day {}'.format(start_day))
 
-    stats = EvaluationStats()
+    stats = EvaluationStats(discount_factor=config['agent_config']['discount_factor'])
     for day in tqdm.tqdm(range(start_day, train_config['num_days'])):
         trainer.run_training_step(stats)
 
