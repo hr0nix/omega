@@ -5,7 +5,7 @@ train_config:
   num_workers: 2
   num_envs: 32
   allow_to_act_in_terminal_state_once: false
-  env_name: 'MiniHack-MazeWalk-Mapped-9x9-v0'
+  env_name: 'MiniHack-MazeWalk-9x9-v0'
   observation_keys: ['glyphs', 'blstats']
   agent_type: 'muzero'
   replay_buffer:
