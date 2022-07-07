@@ -1,4 +1,5 @@
 import functools
+import math
 
 from functools import partial
 from typing import Callable
@@ -405,7 +406,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 dynamics_fn, train_state.params, deterministic=deterministic),
             afterstate_dynamics_fn=jax.tree_util.Partial(
                 train_state.afterstate_dynamics_fn, train_state.params, deterministic=deterministic),
-            discount_factor=self._config['discount_factor'],
+            # The meaning of discount factor is different for Stochastic MuZero MCTS because
+            # every transition is split into a transition to the afterstate and a transition to the next state.
+            discount_factor=math.sqrt(self._config['discount_factor']),
             num_simulations=self._config['num_mcts_simulations'],
             puct_c1=self._config['mcts_puct_c1'],
             dirichlet_noise_alpha=self._config['mcts_dirichlet_noise_alpha'],
@@ -770,7 +773,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 afterstate_value_targets = (
                     reward_targets_scalar +
-                    self._config['discount_factor'] * jax.lax.dynamic_slice_in_dim(
+                    # We take square root here for consistency with interpretation of discount factor in MCTS.
+                    math.sqrt(self._config['discount_factor']) * jax.lax.dynamic_slice_in_dim(
                         padded_target_sources['state_values'], unroll_step + 1, num_timestamps, axis=0) *
                     (1.0 - next_state_is_terminal_or_after)
                 )
