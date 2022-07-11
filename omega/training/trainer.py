@@ -30,7 +30,7 @@ class Trainer(abc.ABC):
         self._next_episode_index = num_envs
 
         self._agent_memory = self._agent.init_memory_batch(num_envs)
-        self._current_state_batch_np = self._batched_env_stepper.reset()
+        self._current_state_batch_jax = pytree.to_jax(self._batched_env_stepper.reset())
 
     @property
     def agent(self):
@@ -52,7 +52,7 @@ class Trainer(abc.ABC):
 
         for step in range(self.num_collection_steps):
             action_batch_jax, act_metadata_batch_jax = self.agent.act_on_batch(
-                self._current_state_batch_np, self._agent_memory)
+                self._current_state_batch_jax, self._agent_memory)
             # Copy actions back to CPU because indexing GPU memory will slow everything down significantly
             action_batch_np = pytree.to_numpy(action_batch_jax)
             reward_done_next_state_batch_np = self._batched_env_stepper.step(action_batch_np)
@@ -75,7 +75,7 @@ class Trainer(abc.ABC):
             transition_batches.append(
                 dict(
                     memory_before=self._agent_memory,
-                    current_state=self._current_state_batch_np,
+                    current_state=self._current_state_batch_jax,
                     actions=action_batch_jax,
                     act_metadata=act_metadata_batch_jax,
                     **reward_done_next_state_batch_jax,
@@ -89,7 +89,7 @@ class Trainer(abc.ABC):
                 done=reward_done_next_state_batch_jax['done'],
             )
 
-            self._current_state_batch_np = reward_done_next_state_batch_np['next_state']
+            self._current_state_batch_jax = reward_done_next_state_batch_jax['next_state']
 
         return self._stack_transition_batches(transition_batches)
 

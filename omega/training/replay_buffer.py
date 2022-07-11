@@ -181,6 +181,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     def find_trajectory(self, trajectory_id):
         return self._buffer.find_by_id(trajectory_id)
 
+    @timeit
     def sample_trajectory_batch(self, batch_size):
         random_trajectories = self._sampler.sample(num_items=batch_size)
         self._update_stats(random_trajectories)
@@ -252,6 +253,7 @@ class ClusteringReplayBuffer(ReplayBuffer):
                 buffer.update_priority(trajectory_id, priority)
                 break
 
+    @timeit
     def sample_trajectory_batch(self, batch_size):
         num_clusters = len(self._buffers)
         # Some clusters might still be empty because we didn't see trajectories that fit there
@@ -304,12 +306,11 @@ def create_from_config(config):
         return MaxAgeReplayBuffer(max_age=config['max_age'], max_buffer_size=config['max_buffer_size'])
 
     elif buffer_type == 'uniform_over_good_and_bad':
-        clustering_fn = lambda t: 1 if np.sum(t['rewards']) >= config['good_total_reward_threshold'] else 0
-        cluster_fn = lambda: create_from_config(config['cluster_buffer'])
+        rewards_field = config.get('rewards_field', 'rewards')
         return ClusteringReplayBuffer(
-            cluster_fn,
+            cluster_buffer_fn=lambda: create_from_config(config['cluster_buffer']),
             num_clusters=2,
-            clustering_fn=clustering_fn,
+            clustering_fn=lambda t: 1 if np.sum(t[rewards_field]) >= config['good_total_reward_threshold'] else 0,
         )
 
     elif buffer_type == 'prioritized':

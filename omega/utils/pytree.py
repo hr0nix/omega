@@ -36,6 +36,14 @@ def update(pytree, *updates):
     return result
 
 
+def remove_keys(pytree, keys):
+    result = {}
+    for k, v in pytree.items():
+        if k not in keys:
+            result[k] = v
+    return result
+
+
 def expand_dims(pytree, axis, result_backend=None):
     expand_dims_op = _select_op(pytree, result_backend, np.expand_dims, jnp.expand_dims)
     return jax.tree_map(lambda t: expand_dims_op(t, axis=axis), pytree)
@@ -82,7 +90,12 @@ def stack(pytrees, axis, result_backend=None):
 
 def split(pytree, size, axis, result_backend=None):
     split_op = _select_op(pytree, result_backend, np.split, jnp.split)
-    return jax.tree_map(lambda t: split_op(t, size, axis=axis), pytree)
+    splitted_pytree = jax.tree_map(lambda t: split_op(t, size, axis=axis), pytree)
+    splitted_pytree = squeeze(splitted_pytree, axis=axis, result_backend=result_backend)
+    return jax.tree_transpose(
+        inner_treedef=jax.tree_structure([_ for _ in range(size)]),
+        outer_treedef=jax.tree_structure(pytree),
+        pytree_to_transpose=splitted_pytree)
 
 
 def concatenate(pytrees, axis, result_backend=None):

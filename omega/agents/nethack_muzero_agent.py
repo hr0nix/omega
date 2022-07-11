@@ -329,13 +329,23 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     @timeit
     def _add_to_replay_buffer(self, trajectory_batch):
+        # Make CPU versions of tensors that might be accessed by the replay buffer
+        rewards_cpu = pytree.to_numpy(trajectory_batch['rewards'])
+
         batch_size = pytree.get_axis_dim(trajectory_batch, 0)
-        trajectories = pytree.split(trajectory_batch, batch_size, axis=0)
+        trajectories = jax.jit(pytree.split, static_argnames=['size', 'axis'])(
+            trajectory_batch, batch_size, axis=0)  # Jit makes splitting faster
+
         for env_idx in range(batch_size):
+            # Add CPU tensors to each trajectory
+            trajectory = pytree.update(trajectories[env_idx], {
+                'rewards_cpu': rewards_cpu[env_idx],
+            })
+
             priority = self._config['initial_priority'] if self._config['use_priorities'] else None
             self._replay_buffer.add_trajectory(
                 trajectory_id=self.TrajectoryId(env_index=env_idx, step=self._current_train_step),
-                trajectory=trajectories[env_idx],
+                trajectory=trajectory,
                 priority=priority,
                 current_step=self._current_train_step
             )
@@ -463,6 +473,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return selected_actions, act_metadata
 
+    @timeit
     def _train(self, training_batch):
         self._train_state, train_stats, per_trajectory_loss_details = self._train_jit(
             self._train_state, training_batch)
@@ -661,7 +672,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     @timeit
     def _make_next_training_batch(self):
         trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
-        trajectory_batch = pytree.stack([item.trajectory for item in trajectory_batch_items], axis=0)
+        # Get rid of CPU-side copies of tensors before batching
+        trajectories = [
+            pytree.remove_keys(item.trajectory, ['rewards_cpu'])
+            for item in trajectory_batch_items
+        ]
+        trajectory_batch = jax.jit(pytree.stack, static_argnames=['axis'])(trajectories, axis=0)
 
         training_batch, reanalyse_stats = self._make_next_training_batch_jit(
             self._train_state, trajectory_batch, self.next_random_key())
