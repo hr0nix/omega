@@ -80,6 +80,14 @@ def stack(pytrees, axis, result_backend=None):
     )
 
 
+def split(pytrees, size, axis, result_backend=None):
+    split_op = _select_op(pytrees[0], result_backend, np.split, jnp.split)
+    return jax.tree_map(
+        lambda *leaves: split_op(leaves, size, axis=axis),
+        *pytrees,
+    )
+
+
 def concatenate(pytrees, axis, result_backend=None):
     concatenate_op = _select_op(pytrees, result_backend, np.concatenate, jnp.concatenate)
     return jax.tree_map(
