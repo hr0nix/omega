@@ -5,6 +5,7 @@ import ray
 import gym
 import minihack
 import wandb
+import jax
 
 from absl import logging
 logging.set_verbosity(logging.INFO)
@@ -65,6 +66,9 @@ def create_agent(config, env):
 
 
 def train_agent(args):
+    if args.log_memory_transfer:
+        jax.config.update('jax_transfer_guard', 'log')
+
     config = load_config(args.config)
     train_config = config['train_config']
 
@@ -139,6 +143,7 @@ def parse_args():
     train_parser.add_argument('--episodes', metavar='DIR', required=False)
     train_parser.add_argument('--episode-videos', metavar='DIR', required=False)
     train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
+    train_parser.add_argument('--log-memory-transfer', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
 
     eval_parser = subparsers.add_parser('eval', help='Eval an agent')

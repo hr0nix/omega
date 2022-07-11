@@ -34,13 +34,18 @@ def run_experiment(args):
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
     env['CUDA_VISIBLE_DEVICES'] = args.gpu
-    subprocess.run(env=env, args=[
+
+    subprocess_args = [
         'python3.8', os.path.join(cur_dir, 'agent.py'), 'train',
         '--config', os.path.join(args.dir, CONFIG_FILENAME),
         '--checkpoints', os.path.join(args.dir, CHECKPOINTS_DIR),
         '--episodes', os.path.join(args.dir, EPISODES_DIR),
         '--wandb-id-file', os.path.join(args.dir, WANDB_ID_FILE),
-    ])
+    ]
+    if args.log_memory_transfer:
+        subprocess_args.append('--log-memory-transfer')
+
+    subprocess.run(env=env, args=subprocess_args)
 
 
 def cleanup_experiment(args):
@@ -93,6 +98,7 @@ def parse_args():
     run_parser = subparsers.add_parser('run', help='Run an experiment')
     run_parser.add_argument('--dir', metavar='DIR', dest='dir', required=True, type=str)
     run_parser.add_argument('--gpu', metavar='GPU_NAME_OR_INDEX', dest='gpu', required=False, type=str, default='0')
+    run_parser.add_argument('--log-memory-transfer', required=False, action='store_true', default=False)
     run_parser.set_defaults(func=run_experiment)
 
     cleanup_parser = subparsers.add_parser('cleanup', help='Cleanup an experiment dir')
