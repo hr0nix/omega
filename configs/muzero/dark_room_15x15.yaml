@@ -19,7 +19,7 @@ agent_config:
   use_priorities: false
   lr: 0.001
   max_gradient_norm: 5.0
-  discount_factor: 0.95
+  discount_factor: 0.99
   num_train_unroll_steps: 5
   reanalyze_batch_size: 192
   num_train_steps: 8
@@ -33,7 +33,7 @@ agent_config:
   value_loss_weight: 1.0
   afterstate_value_loss_weight: 1.0
   reward_loss_weight: 5.0
-  state_similarity_loss_weight: 0.05
+  state_similarity_loss_weight: 0.01
   state_similarity_loss_stop_gradient: false
   chance_outcome_commitment_loss_weight: 100.0
   chance_outcome_prediction_loss_weight: 1.0
