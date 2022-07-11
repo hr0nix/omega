@@ -14,6 +14,7 @@ from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
 from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
+from omega.utils.profiling import enable_profiling
 from omega.utils.gym import NetHackRGBRendering
 from omega.utils.jax import disable_jit_if_no_gpu
 from omega.utils.wandb import get_wandb_id
@@ -66,6 +67,9 @@ def create_agent(config, env):
 
 
 def train_agent(args):
+    if args.log_profile:
+        enable_profiling()
+
     if args.log_memory_transfer:
         jax.config.update('jax_transfer_guard', 'log')
 
@@ -144,6 +148,7 @@ def parse_args():
     train_parser.add_argument('--episode-videos', metavar='DIR', required=False)
     train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
     train_parser.add_argument('--log-memory-transfer', action='store_true', required=False, default=False)
+    train_parser.add_argument('--log-profile', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
 
     eval_parser = subparsers.add_parser('eval', help='Eval an agent')

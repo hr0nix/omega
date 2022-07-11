@@ -46,6 +46,7 @@ class Trainer(abc.ABC):
         # Update the parameters of the agent. We call it a "night" stage.
         self._run_night(stats, trajectory_batch)
 
+    @timeit
     def _run_day(self, stats):
         transition_batches = []
 
@@ -108,6 +109,7 @@ class DummyTrainer(Trainer):
 
 
 class OnPolicyTrainer(Trainer):
+    @timeit
     def _run_night(self, stats, collected_trajectories):
         training_stats = self.agent.train_on_batch(collected_trajectories)
         stats.add_rolling_stats(training_stats)

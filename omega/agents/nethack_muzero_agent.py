@@ -224,7 +224,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         flax.training.checkpoints.save_checkpoint(
             checkpoint_path, self._train_state, step=step, keep=1, overwrite=True)
 
-    #@timeit
+    @timeit
     def train_on_batch(self, trajectory_batch):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
@@ -249,7 +249,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         stats = pytree.array_mean(stats_per_train_step, result_backend='numpy')
         return stats
 
-    #@timeit
+    @timeit
     def act_on_batch(self, observation_batch, memory_batch):
         return self._act_on_batch_jit(
             observation_batch, memory_batch, self._train_state, self.next_random_key())
@@ -264,6 +264,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': jnp.ones(batch_size, dtype=jnp.bool_),
         }
 
+    @timeit
     def update_memory_batch(self, prev_memory, new_memory_state, actions, done):
         initial_memory_state = self._train_state.initial_memory_state_fn(self._train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
@@ -320,6 +321,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return latent_state_trajectory, updated_memory_trajectory
 
+    @timeit
     def _add_to_replay_buffer(self, trajectory_batch):
         # Don't want multiple reads from GPU memory and replay buffer stores everything in RAM anyway
         trajectory_batch = pytree.to_numpy(trajectory_batch)
@@ -334,6 +336,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 current_step=self._current_train_step
             )
 
+    @timeit
     def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
         reward_loss = pytree.to_numpy(trajectory_loss_details['reward_loss'])
         value_loss = pytree.to_numpy(trajectory_loss_details['value_loss'])
@@ -344,6 +347,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         for index, item in enumerate(replayed_items):
             self._replay_buffer.update_priority(item.id, priorities[index])
 
+    @timeit
     def _maybe_update_next_trajectory_memory(self, replayed_items, training_batch):
         # Make sure terminal states are taken into account when updating memory
         updated_memory_after_last_ts_batch = self.update_memory_batch(
@@ -425,7 +429,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return updated_memory_trajectory_batch, mcts_policy_log_probs, mcts_value, mcts_stats
 
-    #@timeit
+    @timeit
     @partial(jax.jit, static_argnums=(0,))
     def _act_on_batch_jit(self, observation_batch, memory_batch, train_state, rng):
         mcts_stats_key, action_key = jax.random.split(rng)
@@ -460,7 +464,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         train_stats = pytree.update(train_stats, self._replay_buffer.get_stats())
         return train_stats, per_trajectory_loss_details
 
-    #@timeit
+    @timeit
     @partial(jax.jit, static_argnums=(0,))
     def _train_jit(self, train_state, training_batch):
         def loss_function(params):
@@ -649,6 +653,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     # TODO: for some reason total execution time of this function
     # TODO: is 200 ms more than _make_next_training_batch_jit + sample_trajectory_batch
+    @timeit
     def _make_next_training_batch(self):
         trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
         trajectory_batch = pytree.stack([item.trajectory for item in trajectory_batch_items], axis=0)
@@ -658,7 +663,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return training_batch, reanalyse_stats, trajectory_batch_items
 
-    #@timeit
+    @timeit
     @partial(jax.jit, static_argnums=(0,))
     def _make_next_training_batch_jit(self, train_state, trajectory_batch, rng):
         trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze(train_state, trajectory_batch, rng)
