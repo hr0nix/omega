@@ -14,7 +14,7 @@ class TrainableAgentBase(Agent):
         pass
 
     @abc.abstractmethod
-    def save_to_checkpoint(self, path, day):
+    def save_to_checkpoint(self, path):
         pass
 
 

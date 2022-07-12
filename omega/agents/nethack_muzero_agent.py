@@ -1,5 +1,6 @@
 import functools
 import math
+import os
 
 from functools import partial
 from typing import Callable
@@ -212,17 +213,35 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def try_load_from_checkpoint(self, path):
         checkpoint_path = flax.training.checkpoints.latest_checkpoint(path)
         if checkpoint_path is None:
-            logging.warning('No checkpoints available at {}'.format(path))
+            logging.warning(f'No checkpoints available at {path}')
             return 0
         else:
-            logging.info('State will be loaded from checkpoint {}'.format(checkpoint_path))
+            logging.info(f'State will be loaded from checkpoint {checkpoint_path}')
             self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
-            return self._train_state.step_index + 1
+            self._current_train_step = self._train_state.step_index
+            self._replay_buffer.load(
+                os.path.join(path, self._get_replay_buffer_checkpoint_filename_prefix()))
+            return self._current_train_step
 
-    def save_to_checkpoint(self, checkpoint_path, step):
-        self._train_state = self._train_state.replace(step_index=step)
+    def save_to_checkpoint(self, checkpoint_path):
+        self._train_state = self._train_state.replace(step_index=self._current_train_step)
         flax.training.checkpoints.save_checkpoint(
-            checkpoint_path, self._train_state, step=step, keep=1, overwrite=True)
+            checkpoint_path, self._train_state, step=self._current_train_step, keep=1, overwrite=True)
+        self._replay_buffer.save(
+            os.path.join(checkpoint_path, self._get_replay_buffer_checkpoint_filename_prefix()))
+        self._remove_old_replay_buffer_checkpoints(checkpoint_path)
+
+    def _remove_old_replay_buffer_checkpoints(self, checkpoint_path):
+        current_checkpoint_filename_prefix = self._get_replay_buffer_checkpoint_filename_prefix()
+        for checkpoint_filename in os.listdir(checkpoint_path):
+            if checkpoint_filename.startswith('replay_buffer.') and not checkpoint_filename.startswith(
+                    current_checkpoint_filename_prefix):
+                full_checkpoint_filename = os.path.join(checkpoint_path, checkpoint_filename)
+                logging.info(f'Removing old replay buffer checkpoint file {full_checkpoint_filename}')
+                os.remove(full_checkpoint_filename)
+
+    def _get_replay_buffer_checkpoint_filename_prefix(self):
+        return f'replay_buffer.step_{self._current_train_step}'
 
     @timeit
     def train_on_batch(self, trajectory_batch):
@@ -388,7 +407,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 next_trajectory_memory_before[0] - updated_memory_state_after_last_ts_batch[batch_index])
             memory_abs_diff_per_trajectory.append(memory_abs_diff)
             next_trajectory_item.trajectory['memory_before']['memory'] = \
-                next_trajectory_item.trajectory['memory_before']['memory'].at(0).set(
+                next_trajectory_item.trajectory['memory_before']['memory'].at[0].set(
                     updated_memory_state_after_last_ts_batch[batch_index])
 
         stats = {}

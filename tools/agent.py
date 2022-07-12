@@ -107,7 +107,7 @@ def train_agent(args):
                 wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day)
             stats.print_summary(title='After {} days:'.format(day + 1))
             if args.checkpoints is not None:
-                agent.save_to_checkpoint(args.checkpoints, day)
+                agent.save_to_checkpoint(args.checkpoints)
 
 
 def eval_agent(args):

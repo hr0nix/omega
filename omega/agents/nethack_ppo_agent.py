@@ -47,6 +47,8 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         self._config = self.CONFIG.copy(config or {})
         self._model_factory = model_factory
 
+        self._current_train_step = 0
+
         current_state_batch = self._make_fake_state_batch()
         self._model, self._train_state = self._build_model(current_state_batch)
         if self._config['use_rnd']:
@@ -103,6 +105,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         else:
             logging.info('State will be loaded from checkpoint {}'.format(checkpoint_path))
             self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
+            self._current_train_step = self._train_state.step_index
 
             if self._config['use_rnd']:
                 rnd_path = self._rnd_checkpoint_path(path)
@@ -111,16 +114,18 @@ class NethackPPOAgent(JaxTrainableAgentBase):
                 self._rnd_train_state = flax.training.checkpoints.restore_checkpoint(
                     rnd_checkpoint_path, self._rnd_train_state)
 
-            return self._train_state.step_index + 1
+            return self._current_train_step
 
-    def save_to_checkpoint(self, checkpoint_path, step):
-        self._train_state = self._train_state.replace(step_index=step)
+    def save_to_checkpoint(self, checkpoint_path):
+        self._train_state = self._train_state.replace(step_index=self._current_train_step)
         flax.training.checkpoints.save_checkpoint(
-            checkpoint_path, self._train_state, step=step, keep=1, overwrite=True)
+            checkpoint_path, self._train_state, step=self._current_train_step, keep=1, overwrite=True)
 
         if self._config['use_rnd']:
             flax.training.checkpoints.save_checkpoint(
-                self._rnd_checkpoint_path(checkpoint_path), self._rnd_train_state, step=step, keep=1, overwrite=True)
+                self._rnd_checkpoint_path(checkpoint_path),
+                self._rnd_train_state,
+                step=self._current_train_step, keep=1, overwrite=True)
 
     @partial(jax.jit, static_argnums=(0,))
     def _act_on_batch_jitted(self, train_state, rnd_train_state, observation_batch, rng):
@@ -305,4 +310,5 @@ class NethackPPOAgent(JaxTrainableAgentBase):
     def train_on_batch(self, trajectory_batch):
         self._train_state, self._rnd_train_state, stats = self._train_on_batch_jitted(
             self._train_state, self._rnd_train_state, trajectory_batch, self.next_random_key())
+        self._current_train_step += 1
         return stats

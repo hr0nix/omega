@@ -2,6 +2,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+import jaxlib.xla_extension
 
 import numpy as np
 
@@ -24,6 +25,21 @@ def _select_op(pytree, result_backend, numpy_op, jax_op):
 
 def copy_structure(pytree):
     return jax.tree_map(lambda x: x, pytree)
+
+
+def get_schema(pytree):
+    return jax.tree_map(lambda x: type(x), pytree)
+
+
+def restore_schema(pytree, schema):
+    """
+    Puts tensors back to their locations specified in schema.
+    """
+    def restore_schema_map(tensor, type):
+        if type == jaxlib.xla_extension.DeviceArray:
+            tensor = jnp.asarray(tensor)
+        return tensor
+    return jax.tree_map(restore_schema_map, pytree, schema)
 
 
 def update(pytree, *updates):

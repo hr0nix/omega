@@ -1,5 +1,5 @@
 train_config:
-  num_days: 3
+  num_days: 5
   epoch_every_num_days: 1
   num_collection_steps: 3
   num_envs: 1

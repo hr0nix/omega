@@ -1,7 +1,10 @@
 import abc
+import dataclasses
+import pickle
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Union
+from pathlib import Path
 
 import numpy as np
 
@@ -17,6 +20,11 @@ class ReplayBufferItem(object):
 
 
 class ReplayBufferStorage(object):
+    @dataclass
+    class _SerializedReplayBufferStorage(object):
+        buffer: 'ReplayBufferStorage'
+        trajectory_schema: Any
+
     def __init__(self, max_size: int):
         self._storage = deque(maxlen=max_size)
         self._id_to_item = {}
@@ -34,7 +42,7 @@ class ReplayBufferStorage(object):
 
         return evicted_item
 
-    def find_by_id(self, id) -> Union[ReplayBufferItem, None]:
+    def find_by_id(self, id: Any) -> Union[ReplayBufferItem, None]:
         return self._id_to_item.get(id)
 
     def evict_left(self) -> ReplayBufferItem:
@@ -42,14 +50,35 @@ class ReplayBufferStorage(object):
         del self._id_to_item[evicted_item.id]
         return evicted_item
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._storage)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> ReplayBufferItem:
         return self._storage[index]
 
+    def save(self, path: Union[str, Path]) -> None:
+        serialized = self._SerializedReplayBufferStorage(
+            buffer=self, trajectory_schema=self._get_trajectory_schema())
+        with open(path, 'wb') as output_file:
+            pickle.dump(serialized, output_file)
 
-# TODO: ideally you'd want to save replay buffer state so that loading from checkpoint restores state fully
+    @staticmethod
+    def load(path: Union[str, Path]) -> 'ReplayBufferStorage':
+        with open(path, 'rb') as input_file:
+            deserialized = pickle.load(input_file)
+        result = deserialized.buffer
+        result._restore_trajectory_schema(deserialized.trajectory_schema)
+        return result
+
+    def _get_trajectory_schema(self) -> Any:
+        return pytree.get_schema(self._storage[0].trajectory) if len(self._storage) > 0 else None
+
+    def _restore_trajectory_schema(self, schema: Any) -> None:
+        for i in range(len(self._storage)):
+            self._storage[i] = dataclasses.replace(
+                self._storage[i], trajectory=pytree.restore_schema(self._storage[i].trajectory, schema))
+
+
 class ReplayBuffer(abc.ABC):
     @abc.abstractmethod
     def add_trajectory(self, trajectory_id, trajectory, *, priority=None, **kwargs):
@@ -78,6 +107,12 @@ class ReplayBuffer(abc.ABC):
     def get_stats(self):
         return {}
 
+    def save(self, path):
+        raise NotImplementedError('This replay buffer type does not support saving')
+
+    def load(self, path):
+        raise NotImplementedError('This replay buffer type does not support loading')
+
 
 class FIFOReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size):
@@ -105,6 +140,12 @@ class FIFOReplayBuffer(ReplayBuffer):
         return {
             'replay_buffer_size': len(self._buffer)
         }
+
+    def save(self, path):
+        self._buffer.save(path)
+
+    def load(self, path):
+        self._buffer = ReplayBufferStorage.load(path)
 
 
 class MaxAgeReplayBuffer(ReplayBuffer):
@@ -148,6 +189,12 @@ class MaxAgeReplayBuffer(ReplayBuffer):
         return {
             'replay_buffer_size': len(self._buffer)
         }
+
+    def save(self, path):
+        self._buffer.save(path)
+
+    def load(self, path):
+        self._buffer = ReplayBufferStorage.load(path)
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
@@ -294,6 +341,18 @@ class ClusteringReplayBuffer(ReplayBuffer):
             for cluster_id in range(len(self._buffers))
             for key, value in self._buffers[cluster_id].get_stats().items()
         }
+
+    @staticmethod
+    def _get_buffer_filename(path, cluster_id):
+        return f'{path}.cluster_{cluster_id}'
+
+    def save(self, path):
+        for cluster_id in range(len(self._buffers)):
+            self._buffers[cluster_id].save(self._get_buffer_filename(path, cluster_id))
+
+    def load(self, path):
+        for cluster_id in range(len(self._buffers)):
+            self._buffers[cluster_id].load(self._get_buffer_filename(path, cluster_id))
 
 
 def create_from_config(config):
