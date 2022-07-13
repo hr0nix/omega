@@ -458,7 +458,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
         mcts_key, rng = jax.random.split(rng)
         mcts_key_batch = jax.random.split(mcts_key, batch_size * num_timestamps).reshape(batch_size, num_timestamps, 2)
-        mcts_policy_log_probs, mcts_value, _, mcts_stats = trajectory_batch_mcts(
+        mcts_policy_log_probs, mcts_value, mcts_search_trees, mcts_stats = trajectory_batch_mcts(
             latent_state_trajectory_batch, mcts_key_batch)
 
         return updated_memory_trajectory_batch, mcts_policy_log_probs, mcts_value, mcts_stats

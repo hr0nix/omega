@@ -77,5 +77,6 @@ def main():
         print_message(observation)
         print(f'Reward obtained: {reward:0.000}, done={done}')
 
+
 if __name__ == '__main__':
     main()

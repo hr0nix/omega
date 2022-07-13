@@ -67,6 +67,9 @@ def create_agent(config, env):
 
 
 def train_agent(args):
+    if args.disable_jit:
+        jax.disable_jit()
+
     if args.log_profile:
         enable_profiling()
 
@@ -80,8 +83,8 @@ def train_agent(args):
     if args.wandb_id_file is not None:
         wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
 
-    env_factory = lambda: make_env(
-        train_config, episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
+    def env_factory():
+        return make_env(train_config, episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
     env = env_factory()
     agent = create_agent(config, env)
     trainer = OnPolicyTrainer(
@@ -114,8 +117,9 @@ def eval_agent(args):
     ray.init(num_cpus=args.num_parallel_envs)
 
     config = load_config(args.train_config)
-    env_factory = lambda: make_env(
-        config['train_config'], episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
+
+    def env_factory():
+        return make_env(config['train_config'], episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
     env = env_factory()
     agent = create_agent(config, env)
     trainer = DummyTrainer(
@@ -149,6 +153,7 @@ def parse_args():
     train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
     train_parser.add_argument('--log-memory-transfer', action='store_true', required=False, default=False)
     train_parser.add_argument('--log-profile', action='store_true', required=False, default=False)
+    train_parser.add_argument('--disable-jit', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
 
     eval_parser = subparsers.add_parser('eval', help='Eval an agent')
@@ -166,5 +171,4 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
-    with disable_jit_if_no_gpu():
-        args.func(args)
+    args.func(args)
