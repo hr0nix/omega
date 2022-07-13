@@ -1,8 +1,8 @@
+import numpy as np
+
 import jax.lax
 import jax.numpy as jnp
 import jax.experimental.host_callback
-
-from functools import partial
 
 from ..utils import pytree
 
@@ -403,5 +403,45 @@ def mcts(
         'mcts_search_depth': max_depth,
     }
 
-    return root_mcts_policy_log_probs, root_mcts_value, stats
+    return root_mcts_policy_log_probs, root_mcts_value, updated_tree, stats
 
+
+def visualize_search_tree(tree, filename):
+    import pygraphviz
+    graph = pygraphviz.AGraph(directed=True)
+
+    def format_policy(probs):
+        return '[' + ' '.join(f'{prob:.2f}' for prob in probs) + ']'
+
+    def as_scalar(device_array):
+        return np.asarray(device_array).item()
+
+    def node_label(node_index):
+        label = ''
+        if tree['expanded'][node_index]:
+            value = get_state_value(tree, node_index)
+            label += f'N: {as_scalar(tree["num_visits"][node_index])}\n'
+            label += f'V: {as_scalar(value):.4f}\n'
+            label += f'PV: {as_scalar(tree["predicted_value"][node_index]):.4f}\n'
+            label += f'NV: {as_scalar(get_normalized_value(tree, value)):.4f}\n'
+
+            if tree['is_chance'][node_index]:
+                label += f'CP: {format_policy(tree["chance_outcome_prior_probs"][node_index])}\n'
+            else:
+                label += f'R: {as_scalar(tree["reward"][node_index]):.3f}\n'
+                label += f'P: {format_policy(tree["action_prior_probs"][node_index])}\n'
+        return label
+
+    def add_node(node_index):
+        label = node_label(node_index)
+        color = 'cyan' if tree['is_chance'][node_index] else 'green' if tree['expanded'][node_index] else 'red'
+        graph.add_node(node_index, label=label, fillcolor=color, shape='box', style='filled')
+
+    add_node(0)
+    for child_index in range(1, np.asarray(tree['first_free_index']).item()):
+        add_node(child_index)
+        parent_index = get_global_parent_index(tree, child_index)
+        action_or_chance_outcome = get_local_child_index(tree, child_index)
+        graph.add_edge(parent_index, child_index, label=action_or_chance_outcome)
+
+    graph.draw(filename, prog='dot')

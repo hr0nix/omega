@@ -1,7 +1,7 @@
 import numpy as np
 import jax
 
-from omega.mcts.muzero import mcts
+from omega.mcts.muzero import mcts, visualize_search_tree
 
 
 class SimpleBandit:
@@ -109,9 +109,10 @@ def _test_bandit(
         search_policy='puct',
         result_policy='visit_count',
         num_simulations=60,
+        search_tree_filename=None,
 ):
     with jax.disable_jit():
-        policy_log_probs, value, _ = mcts(
+        policy_log_probs, value, search_tree, _ = mcts(
             initial_state=bandit.initial_state,
             rng=jax.random.PRNGKey(31337),
             prediction_fn=bandit.prediction,
@@ -132,6 +133,9 @@ def _test_bandit(
         assert np.argmax(policy_probs) == np.argmax(expected_arm_values)
         assert np.abs(value - np.sum(policy_probs * expected_arm_values)) < 0.01
 
+        if search_tree_filename is not None:
+            visualize_search_tree(search_tree, search_tree_filename)
+
 
 def test_simple_bandit_puct():
     _test_bandit(
@@ -140,6 +144,7 @@ def test_simple_bandit_puct():
         search_policy='puct',
         result_policy='visit_count',
         num_simulations=60,
+        search_tree_filename='search_tree_puct.dot',
     )
 
 
@@ -150,4 +155,5 @@ def test_simple_bandit_pi_bar():
         search_policy='pi_bar',
         result_policy='pi_bar',
         num_simulations=40,
+        search_tree_filename='search_tree_pi_bar.dot',
     )
