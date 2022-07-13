@@ -3,7 +3,7 @@ FROM nvidia/cuda:11.1.1-cudnn8-devel-ubuntu18.04
 RUN apt-get update --fix-missing
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
     build-essential autoconf libtool pkg-config software-properties-common \
-    python3.8 python3.8-dev python3-pip bison flex git libbz2-dev wget vim graphviz less sudo
+    python3.8 python3.8-dev python3-pip bison flex git libbz2-dev wget vim graphviz graphviz-dev less sudo
 
 # Install cmake
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add -
