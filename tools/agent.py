@@ -68,12 +68,15 @@ def create_agent(config, env):
 
 def train_agent(args):
     if args.disable_jit:
+        logging.info('JIT is disabled')
         jax.disable_jit()
 
     if args.log_profile:
+        logging.info('Profiling is enabled')
         enable_profiling()
 
     if args.log_memory_transfer:
+        logging.info('Memory transfer logging is enabled')
         jax.config.update('jax_transfer_guard', 'log')
 
     config = load_config(args.config)
