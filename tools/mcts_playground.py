@@ -32,8 +32,8 @@ def number_of_first_child_visits():
 
 def mcts_test():
     discount_factor = 0.95
-    action_probs = jnp.array([0.,0.9666665, 0.,0.03333333])#jnp.array([0.6, 0.2, 0.1, 0.1])
-    reward_stddev =  0.06
+    action_probs = jnp.array([0., 0.9666665, 0., 0.03333333])
+    reward_stddev = 0.06
 
     def value_func(r):
         return r / (1 - discount_factor)
@@ -43,7 +43,10 @@ def mcts_test():
         return jax.lax.select(s == 2, 2.0, 1.0)
 
     def prediction_fn(s, rng):
-        return jnp.log(action_probs), value_func(reward_func(s)) + jax.random.normal(rng) * reward_stddev / (1 - discount_factor)
+        return (
+            jnp.log(action_probs), value_func(reward_func(s)) +
+            jax.random.normal(rng) * reward_stddev / (1 - discount_factor)
+        )
 
     def dynamics_fn(s, a, rng):
         next_state = jax.lax.select(s == 0, s + a + 1, s)  # Keep in the same state after root (which is state 0)

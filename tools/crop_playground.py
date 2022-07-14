@@ -1,7 +1,7 @@
 import gym
-import minihack
+import minihack  # noqa
 import nle.nethack
-import omega.minihack.envs
+import omega.minihack.envs  # noqa
 
 from omega.utils.gym import StayInTerminalStateWrapper, AutoResetWrapper
 

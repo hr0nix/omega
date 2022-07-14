@@ -106,12 +106,12 @@ def stack(pytrees, axis, result_backend=None):
 
 def split(pytree, size, axis, result_backend=None):
     split_op = _select_op(pytree, result_backend, np.split, jnp.split)
-    splitted_pytree = jax.tree_map(lambda t: split_op(t, size, axis=axis), pytree)
-    splitted_pytree = squeeze(splitted_pytree, axis=axis, result_backend=result_backend)
+    split_pytree = jax.tree_map(lambda t: split_op(t, size, axis=axis), pytree)
+    split_pytree = squeeze(split_pytree, axis=axis, result_backend=result_backend)
     return jax.tree_transpose(
         inner_treedef=jax.tree_structure([_ for _ in range(size)]),
         outer_treedef=jax.tree_structure(pytree),
-        pytree_to_transpose=splitted_pytree)
+        pytree_to_transpose=split_pytree)
 
 
 def concatenate(pytrees, axis, result_backend=None):

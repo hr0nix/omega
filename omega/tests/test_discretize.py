@@ -20,6 +20,7 @@ def test_round_to_closest_canonic_value():
         jnp.array([[0.0, 0.1, 0.0, 1.0, -1.0]])
     )
 
+
 def test_discretize_exact(lookup):
     np.testing.assert_array_equal(
         discretize(jnp.array([0.1, 1.0, 0.01]), lookup),

@@ -3,12 +3,9 @@ import yaml
 import tqdm
 import ray
 import gym
-import minihack
+import minihack  # noqa
 import wandb
 import jax
-
-from absl import logging
-logging.set_verbosity(logging.INFO)
 
 from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
@@ -18,6 +15,9 @@ from omega.utils.profiling import enable_profiling
 from omega.utils.gym import NetHackRGBRendering, NetHackBLStatsFiltering
 from omega.utils.jax import conditionally_disable_jit
 from omega.utils.wandb import get_wandb_id
+
+from absl import logging
+logging.set_verbosity(logging.INFO)
 
 
 def make_env(train_config, episodes_dir, episode_video_dir):
@@ -138,7 +138,7 @@ def eval_agent(args):
     if start_day == 0:
         raise RuntimeError('Looks like no checkpoint has been found')
 
-    stats = EvaluationStats()
+    stats = EvaluationStats(discount_factor=config['agent_config']['discount_factor'])
     for _ in tqdm.tqdm(range(args.num_steps)):
         trainer.run_training_step(stats)
 

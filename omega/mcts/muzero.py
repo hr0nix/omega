@@ -165,7 +165,7 @@ def make_tree(
 # https://arxiv.org/abs/2007.12509
 def get_pi_bar_policy(tree, node_index, c1):
     num_visits = tree['num_visits'][node_index]
-    l = c1 * jnp.sqrt(num_visits) / num_visits
+    lamb = c1 * jnp.sqrt(num_visits) / num_visits
     pi = tree['action_prior_probs'][node_index]
 
     def get_normalized_action_q_value(action):
@@ -174,11 +174,11 @@ def get_pi_bar_policy(tree, node_index, c1):
 
     q_norm = jax.vmap(get_normalized_action_q_value)(jnp.arange(get_num_actions(tree), dtype=jnp.int32))
 
-    a_min = jnp.max(q_norm + l * pi)
-    a_max = jnp.max(q_norm + l)
+    a_min = jnp.max(q_norm + lamb * pi)
+    a_max = jnp.max(q_norm + lamb)
 
     def get_pi_bar(a):
-        return l * pi / (a - q_norm)
+        return lamb * pi / (a - q_norm)
 
     def bin_search_condition(state):
         a_min, a_max = state
@@ -205,6 +205,7 @@ def get_pi_bar_policy(tree, node_index, c1):
     pi_bar /= jnp.sum(pi_bar)  # Normalization found by binary search is imprecise
 
     return pi_bar
+
 
 def pi_bar_search_policy(tree, node_index, c1):
     probs = get_pi_bar_policy(tree, node_index, c1)
@@ -298,12 +299,14 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     def chance_node_expansion_cond(loop_state):
         is_first_iter = loop_state[-1]
         return jnp.logical_and(parent_is_chance, is_first_iter)
+
     def chance_node_expansion(_):
         num_chance_outcomes = get_num_chance_outcomes(tree)
         chance_outcome_one_hot = jax.nn.one_hot(local_child_index, num_classes=num_chance_outcomes, dtype=jnp.float32)
         child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot)
         action_log_probs, value = prediction_fn(child_state)
         return child_state, reward, value, action_log_probs, False
+
     child_state, reward, value, action_log_probs, _ = jax.lax.while_loop(
         cond_fun=chance_node_expansion_cond, body_fun=chance_node_expansion,
         init_val=(child_state, reward, value, action_log_probs, True)
@@ -312,10 +315,12 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     def regular_node_expansion_cond(loop_state):
         is_first_iter = loop_state[-1]
         return jnp.logical_and(jnp.logical_not(parent_is_chance), is_first_iter)
+
     def regular_node_expansion(_):
         afterstate = afterstate_dynamics_fn(parent_state, local_child_index)
         chance_outcome_log_probs, value = afterstate_prediction_fn(afterstate)
         return afterstate, value, chance_outcome_log_probs, False
+
     child_state, value, chance_outcome_log_probs, _ = jax.lax.while_loop(
         cond_fun=regular_node_expansion_cond, body_fun=regular_node_expansion,
         init_val=(child_state, value, chance_outcome_log_probs, True)

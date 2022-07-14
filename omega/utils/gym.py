@@ -27,6 +27,8 @@ class NetHackBLStatsFiltering(gym.Wrapper):
 
     def _make_filtered_observation_space(self):
         wrapped_observation_space = self.env.observation_space
+        if not isinstance(wrapped_observation_space, gym.spaces.Dict):
+            raise ValueError('Observation space must be a dict.')
 
         bl_stats_space = wrapped_observation_space['blstats']
         if not isinstance(bl_stats_space, gym.spaces.Box):

@@ -1,4 +1,4 @@
-import pytest
+import pytest  # noqa
 
 import jax.numpy as jnp
 import numpy as np

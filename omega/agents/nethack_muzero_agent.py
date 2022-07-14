@@ -8,8 +8,6 @@ from dataclasses import dataclass
 
 from absl import logging
 
-import numpy as np
-
 import flax.struct
 import flax.training.train_state
 import flax.training.checkpoints
@@ -319,7 +317,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': done,
         }
 
-    def _represent_trajectory(self, params, observation_trajectory, memory_trajectory, train_state, deterministic):
+    @staticmethod
+    def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, deterministic):
         """
         Recurrently unrolls the representation function forwards starting from the initial memory state
         to embed the given observation trajectory.
@@ -470,7 +469,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         trajectory_mcts = jax.vmap(mcts_func)
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
         mcts_key, rng = jax.random.split(rng)
-        mcts_key_batch = jax.random.split(mcts_key, batch_size * num_timestamps).reshape(batch_size, num_timestamps, 2)
+        mcts_key_batch = jax.random.split(mcts_key, batch_size * num_timestamps).reshape(
+            (batch_size, num_timestamps, 2))
         mcts_policy_log_probs, mcts_value, mcts_search_trees, mcts_stats = trajectory_batch_mcts(
             latent_state_trajectory_batch, mcts_key_batch)
 
@@ -675,7 +675,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 return loss, {
                     'afterstate_value_loss': afterstate_value_loss,
-                    'value_loss' : value_loss,
+                    'value_loss': value_loss,
                     'reward_loss': reward_loss,
                     'policy_loss': policy_loss,
                     'chance_outcome_prediction_loss': chance_outcome_prediction_loss,
@@ -769,7 +769,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             })
 
             # Padding will make computations at the end of a trajectory more convenient
-            assert num_timestamps >= num_unroll_steps, 'There will be unroll steps with no ground truth at all otherwise'
+            assert num_timestamps >= num_unroll_steps, \
+                'There will be unroll steps with no ground truth at all otherwise'
             padded_target_sources = {
                 'state_values': jnp.concatenate(
                     # We need an extra padded value here to compute afterstate values
@@ -841,7 +842,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'value': trajectory['training_targets']['value'].at[:, unroll_step].set(value_targets),
                     'afterstate_value': trajectory['training_targets']['afterstate_value'].at[:, unroll_step].set(
                         afterstate_value_targets),
-                    'rewards_scalar' : trajectory['training_targets']['rewards_scalar'].at[:, unroll_step].set(
+                    'rewards_scalar': trajectory['training_targets']['rewards_scalar'].at[:, unroll_step].set(
                         reward_targets_scalar),
                     'policy': trajectory['training_targets']['policy'].at[:, unroll_step].set(policy_target_probs),
                     'actions': trajectory['training_targets']['actions'].at[:, unroll_step].set(

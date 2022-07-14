@@ -158,7 +158,6 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
 
         return pytree.squeeze(chance_outcome_embedding, axis=0)
 
-
     def representation(self, prev_memory, prev_action, observation, deterministic=None):
         """
         Produces the representation of an observation.

@@ -1,7 +1,6 @@
 from dataclasses import field
 from typing import Optional, Dict
 
-import jax.random
 from flax import linen as nn
 
 from .gating import GRUGate
@@ -84,7 +83,7 @@ class TransformerNetBase(nn.Module):
                 use_gating=self.use_gating,
                 gating_config=self.gating_config,
                 deterministic=self.deterministic,
-                name = f'block_{block_idx}',
+                name=f'block_{block_idx}',
             )
             for block_idx in range(self.num_blocks)
         ]

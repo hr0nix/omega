@@ -9,7 +9,7 @@ def assert_sampling_probs(sampler, expected_item_to_prob, num_samples=10000, eps
 
     for item, expected_prob in expected_item_to_prob.items():
         actual_prob = actual_item_to_freq.get(item, 0) / num_samples
-        assert abs(expected_prob -  actual_prob) < eps
+        assert abs(expected_prob - actual_prob) < eps
 
 
 def test_linear_sampler_add():
