@@ -278,7 +278,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
 
 class ClusteringReplayBuffer(ReplayBuffer):
-    def __init__(self, cluster_buffer_fn, num_clusters, clustering_fn, distribution_power=1.0):
+    def __init__(self, cluster_buffer_fn, num_clusters, clustering_fn, distribution_power=0.0):
         super(ClusteringReplayBuffer, self).__init__()
         self._buffers = [cluster_buffer_fn() for _ in range(num_clusters)]
         self._clustering_fn = clustering_fn
@@ -308,7 +308,7 @@ class ClusteringReplayBuffer(ReplayBuffer):
 
         num_clusters = len(self._buffers)
         cluster_fractions = np.array([
-            self._buffers[i].size ** (-self._distribution_power) if self._buffers[i].size > 0 else 0.0
+            self._buffers[i].size ** self._distribution_power if self._buffers[i].size > 0 else 0.0
             for i in range(num_clusters)
         ])
         cluster_fractions /= np.sum(cluster_fractions)
@@ -339,7 +339,7 @@ class ClusteringReplayBuffer(ReplayBuffer):
 
     @staticmethod
     def _get_buffer_stat_key(key, cluster_id):
-        return f'{key}_{cluster_id}'
+        return f'{key}_cluster_{cluster_id}'
 
     def get_stats(self):
         result = {
@@ -349,7 +349,10 @@ class ClusteringReplayBuffer(ReplayBuffer):
         }
         if self._last_num_samples is not None:
             for cluster_id in range(len(self._buffers)):
-                result[self._get_buffer_stat_key('num_samples', cluster_id)] = self._last_num_samples[cluster_id]
+                result.update({
+                    self._get_buffer_stat_key('replay_buffer_num_samples', cluster_id):
+                        self._last_num_samples[cluster_id]
+                })
         return result
 
     @staticmethod
