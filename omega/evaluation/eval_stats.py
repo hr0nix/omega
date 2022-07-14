@@ -23,14 +23,19 @@ class FinishedEpisodeStats(object):
 
 class ExponentialSmoother(object):
     def __init__(self, smoothing):
-        self._value = 0.0
+        self._value = None
         self._smoothing = smoothing
 
     def add(self, value):
-        self._value = self._smoothing * self._value + (1.0 - self._smoothing) * value
+        if self._value is None:
+            self._value = value
+        else:
+            self._value = self._smoothing * self._value + (1.0 - self._smoothing) * value
 
     @property
     def smoothed_value(self):
+        if self._value is None:
+            raise RuntimeError('At least one value must be added first')
         return self._value
 
 
