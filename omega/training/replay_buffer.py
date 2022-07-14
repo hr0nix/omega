@@ -278,10 +278,13 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
 
 class ClusteringReplayBuffer(ReplayBuffer):
-    def __init__(self, cluster_buffer_fn, num_clusters, clustering_fn):
+    def __init__(self, cluster_buffer_fn, num_clusters, clustering_fn, distribution_power=1.0):
         super(ClusteringReplayBuffer, self).__init__()
         self._buffers = [cluster_buffer_fn() for _ in range(num_clusters)]
         self._clustering_fn = clustering_fn
+        self._distribution_power = distribution_power
+
+        self._last_num_samples = None
 
     def add_trajectory(self, trajectory_id, trajectory, **kwargs):
         cluster_id = self._get_trajectory_cluster(trajectory)
@@ -300,28 +303,27 @@ class ClusteringReplayBuffer(ReplayBuffer):
                 buffer.update_priority(trajectory_id, priority)
                 break
 
+    def _compute_num_samples_per_cluster(self, batch_size):
+        assert self.size > 0
+
+        num_clusters = len(self._buffers)
+        cluster_fractions = np.array([
+            self._buffers[i].size ** (-self._distribution_power) if self._buffers[i].size > 0 else 0.0
+            for i in range(num_clusters)
+        ])
+        cluster_fractions /= np.sum(cluster_fractions)
+        num_samples = np.round(batch_size * cluster_fractions).astype(int)
+        assert np.sum(num_samples) == batch_size
+        return num_samples
+
     @timeit
     def sample_trajectory_batch(self, batch_size):
-        num_clusters = len(self._buffers)
-        # Some clusters might still be empty because we didn't see trajectories that fit there
-        active_clusters = set(
-            cluster_id for cluster_id in range(num_clusters) if not self._buffers[cluster_id].empty
-        )
-        num_active_clusters = len(active_clusters)
-        assert num_active_clusters > 0
-
-        # Distribute batch size between all active clusters
-        num_samples_from_cluster = [
-            batch_size // num_active_clusters + (1 if cluster_id < batch_size % num_active_clusters else 0)
-            for cluster_id in active_clusters
-        ]
-        assert sum(num_samples_from_cluster) == batch_size
-
+        self._last_num_samples = self._compute_num_samples_per_cluster(batch_size)
         random_trajectories = [
             trajectory
-            for active_cluster_idx, cluster_id in enumerate(active_clusters)
-            for trajectory in self._buffers[cluster_id].sample_trajectory_batch(
-                num_samples_from_cluster[active_cluster_idx])
+            for cluster_id in range(len(self._buffers))
+            for trajectory in self._buffers[cluster_id].sample_trajectory_batch(self._last_num_samples[cluster_id])
+            if self._last_num_samples[cluster_id] > 0
         ]
         return random_trajectories
 
@@ -335,12 +337,20 @@ class ClusteringReplayBuffer(ReplayBuffer):
     def size(self):
         return sum(b.size for b in self._buffers)
 
+    @staticmethod
+    def _get_buffer_stat_key(key, cluster_id):
+        return f'{key}_{cluster_id}'
+
     def get_stats(self):
-        return {
-            f'{key}_cluster_{cluster_id}': value
+        result = {
+            self._get_buffer_stat_key(key, cluster_id): value
             for cluster_id in range(len(self._buffers))
             for key, value in self._buffers[cluster_id].get_stats().items()
         }
+        if self._last_num_samples is not None:
+            for cluster_id in range(len(self._buffers)):
+                result[self._get_buffer_stat_key('num_samples', cluster_id)] = self._last_num_samples[cluster_id]
+        return result
 
     @staticmethod
     def _get_buffer_filename(path, cluster_id):
@@ -370,6 +380,7 @@ def create_from_config(config):
             cluster_buffer_fn=lambda: create_from_config(config['cluster_buffer']),
             num_clusters=2,
             clustering_fn=lambda t: 1 if np.sum(t[rewards_field]) >= config['good_total_reward_threshold'] else 0,
+            **get_dict_slice(config, ['distribution_power'])
         )
 
     elif buffer_type == 'prioritized':

@@ -1,4 +1,5 @@
 import os
+import copy
 
 import array2gif
 import gym
@@ -10,6 +11,53 @@ from absl import logging
 from threading import Lock
 
 from . import pytree
+
+from ..minihack.utils import filter_bl_stats, keep_bl_stats, filtered_bl_stats_shape
+
+
+class NetHackBLStatsFiltering(gym.Wrapper):
+    def __init__(self, env, keys_to_filter=None, keys_to_keep=None):
+        if not ((keys_to_filter is None) ^ (keys_to_keep is None)):
+            raise ValueError('Either keys_to_filter or keys_to_keep must be specified, but not both')
+
+        super().__init__(env)
+        self._keys_to_filter = keys_to_filter
+        self._keys_to_keep = keys_to_keep
+        self.observation_space = self._make_filtered_observation_space()
+
+    def _make_filtered_observation_space(self):
+        wrapped_observation_space = self.env.observation_space
+
+        bl_stats_space = wrapped_observation_space['blstats']
+        if not isinstance(bl_stats_space, gym.spaces.Box):
+            raise ValueError('blstats must have a Box space')
+
+        observation_space = copy.deepcopy(wrapped_observation_space)
+        observation_space['blstats'] = gym.spaces.Box(
+            low=np.iinfo(np.int32).min, high=np.iinfo(np.int32).max, dtype=np.int64,
+            shape=filtered_bl_stats_shape(self._keys_to_filter, self._keys_to_keep),
+        )
+
+        return observation_space
+
+    def _filter_observation(self, observation):
+        if 'blstats' not in observation:
+            raise RuntimeError('No blstats found in observation')
+
+        if self._keys_to_filter is not None:
+            observation['blstats'] = filter_bl_stats(observation['blstats'], self._keys_to_filter)
+        if self._keys_to_keep is not None:
+            observation['blstats'] = keep_bl_stats(observation['blstats'], self._keys_to_keep)
+
+        return observation
+
+    def reset(self, **kwargs):
+        observation = super().reset(**kwargs)
+        return self._filter_observation(observation)
+
+    def step(self, action):
+        observation, reward, done, info = super().step(action)
+        return self._filter_observation(observation), reward, done, info
 
 
 class NetHackRGBRendering(gym.Wrapper):

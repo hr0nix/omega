@@ -243,10 +243,21 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def _get_replay_buffer_checkpoint_filename_prefix(self):
         return f'replay_buffer.step_{self._current_train_step}'
 
+    @partial(jax.jit, static_argnums=0)
+    def _get_current_batch_stats_jit(self, trajectory_batch):
+        return {
+            'act_avg_mcts_policy_entropy': jnp.mean(
+                jax.vmap(jax.vmap(entropy))(trajectory_batch['act_metadata']['log_mcts_action_probs'])
+            ),
+            'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
+            'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
+        }
+
     @timeit
     def train_on_batch(self, trajectory_batch):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
+        current_batch_stats = self._get_current_batch_stats_jit(trajectory_batch)
         self._add_to_replay_buffer(trajectory_batch)
 
         stats_per_train_step = []
@@ -267,6 +278,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._current_train_step += 1
 
         stats = pytree.array_mean(stats_per_train_step, result_backend='numpy')
+        stats = pytree.update(stats, pytree.to_numpy(current_batch_stats))
+
         return stats
 
     @timeit

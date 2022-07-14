@@ -15,7 +15,7 @@ from omega.training import OnPolicyTrainer, DummyTrainer
 from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
 from omega.utils.profiling import enable_profiling
-from omega.utils.gym import NetHackRGBRendering
+from omega.utils.gym import NetHackRGBRendering, NetHackBLStatsFiltering
 from omega.utils.jax import conditionally_disable_jit
 from omega.utils.wandb import get_wandb_id
 
@@ -37,6 +37,10 @@ def make_env(train_config, episodes_dir, episode_video_dir):
 
     if episode_video_dir is not None:
         env = NetHackRGBRendering(env, episode_video_dir)
+
+    if train_config.get('filter_bl_stats') or train_config.get('keep_bl_stats'):
+        env = NetHackBLStatsFiltering(
+            env, keys_to_filter=train_config.get('filter_bl_stats'), keys_to_keep=train_config.get('keep_bl_stats'))
 
     return env
 
@@ -79,7 +83,7 @@ def train_agent(args):
         config = load_config(args.config)
         train_config = config['train_config']
 
-        ray.init(num_cpus=train_config['num_workers'])
+        ray.init(num_cpus=train_config['num_workers'], local_mode=args.ray_local_mode)
         if args.wandb_id_file is not None:
             wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
 
@@ -154,6 +158,7 @@ def parse_args():
     train_parser.add_argument('--log-memory-transfer', action='store_true', required=False, default=False)
     train_parser.add_argument('--log-profile', action='store_true', required=False, default=False)
     train_parser.add_argument('--disable-jit', action='store_true', required=False, default=False)
+    train_parser.add_argument('--ray-local-mode', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
 
     eval_parser = subparsers.add_parser('eval', help='Eval an agent')
