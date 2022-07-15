@@ -1,3 +1,5 @@
+import chex
+
 import numpy as np
 
 import jax.lax
@@ -23,6 +25,13 @@ def get_local_child_index(tree, node_index):
 def get_state_value(tree, node_index):
     # Add eps to work around num_visits=0
     return tree['value_sum'][node_index] / (tree['num_visits'][node_index] + 1e-10)
+
+
+def deterministic_sampling(probs, visit_counts):
+    # As proposed in "Policy improvement by planning with Gumbel", https://openreview.net/forum?id=bERaNdoegnO
+    chex.assert_equal_shape([probs, visit_counts])
+    scores = probs - visit_counts / (1.0 + jnp.sum(visit_counts, keepdims=True, axis=-1))
+    return jnp.argmax(scores, axis=-1)
 
 
 def get_normalized_q_value(tree, node_index):
@@ -69,23 +78,73 @@ def update_value_normalization(tree, value):
     return tree
 
 
+def get_action_visit_counts(tree, node_index):
+    """
+    Should only be called on regular nodes!
+    """
+    first_child_index = tree['first_child_index'][node_index]
+    return jax.lax.dynamic_slice_in_dim(tree['num_visits'], first_child_index, get_num_actions(tree))
+
+
+def get_chance_outcome_visit_counts(tree, node_index):
+    """
+    Should only be called on chance nodes!
+    """
+    first_child_index = tree['first_child_index'][node_index]
+    return jax.lax.dynamic_slice_in_dim(tree['num_visits'], first_child_index, get_num_chance_outcomes(tree))
+
+
 def get_visitation_based_policy(tree, node_index):
-    def action_count(tree, node_index, action):
+    node_action_counts = get_action_visit_counts(tree, node_index)
+    return node_action_counts / jnp.sum(node_action_counts).astype(jnp.float32)
+
+
+def get_pi_bar_policy(tree, node_index, c1):
+    """
+    Implements the search policy from "Monte-Carlo tree search as regularized policy optimization",
+    https://arxiv.org/abs/2007.12509
+    """
+    num_visits = tree['num_visits'][node_index]
+    lamb = c1 * jnp.sqrt(num_visits) / num_visits
+    pi = tree['action_prior_probs'][node_index]
+
+    def get_normalized_action_q_value(action):
         child_index = get_global_child_index(tree, node_index, action)
-        return tree['num_visits'][child_index]
+        return get_normalized_q_value(tree, child_index)
 
-    node_action_counts = jax.vmap(action_count, in_axes=(None, None, 0))(
-        tree, node_index, jnp.arange(get_num_actions(tree), dtype=jnp.int32)
-    )
-    return jnp.log(node_action_counts) - jnp.log(jnp.sum(node_action_counts))
+    q_norm = jax.vmap(get_normalized_action_q_value)(jnp.arange(get_num_actions(tree), dtype=jnp.int32))
 
+    a_min = jnp.max(q_norm + lamb * pi)
+    a_max = jnp.max(q_norm + lamb)
 
-def get_policy_value(tree, node_index, policy_probs):
-    def get_q_value(action):
-        child_index = get_global_child_index(tree, node_index, action)
-        return get_state_value(tree, child_index)
-    q_values = jax.vmap(get_q_value)(jnp.arange(get_num_actions(tree), dtype=jnp.int32))
-    return jnp.sum(q_values * policy_probs)
+    def get_pi_bar(a):
+        return lamb * pi / (a - q_norm)
+
+    def bin_search_condition(state):
+        a_min, a_max = state
+        return a_max - a_min > 0.01
+
+    def bin_search_body(state):
+        a_min, a_max = state
+        a = 0.5 * (a_min + a_max)
+
+        pi_bar = get_pi_bar(a)
+        pi_bar_norm = jnp.sum(pi_bar)
+
+        a_min, a_max = jax.lax.cond(
+            pred=pi_bar_norm > 1,
+            true_fun=lambda _: (a, a_max),
+            false_fun=lambda _: (a_min, a),
+            operand=None,
+        )
+        return a_min, a_max
+
+    a_min, a_max = jax.lax.while_loop(cond_fun=bin_search_condition, body_fun=bin_search_body, init_val=(a_min, a_max))
+    a = 0.5 * (a_min + a_max)
+    pi_bar = get_pi_bar(a)
+    pi_bar /= jnp.sum(pi_bar)  # Normalization found by binary search is imprecise
+
+    return pi_bar
 
 
 def init_node(
@@ -161,63 +220,10 @@ def make_tree(
     )
 
 
-# Implements the search policy from "Monte-Carlo tree search as regularized policy optimization",
-# https://arxiv.org/abs/2007.12509
-def get_pi_bar_policy(tree, node_index, c1):
-    num_visits = tree['num_visits'][node_index]
-    lamb = c1 * jnp.sqrt(num_visits) / num_visits
-    pi = tree['action_prior_probs'][node_index]
-
-    def get_normalized_action_q_value(action):
-        child_index = get_global_child_index(tree, node_index, action)
-        return get_normalized_q_value(tree, child_index)
-
-    q_norm = jax.vmap(get_normalized_action_q_value)(jnp.arange(get_num_actions(tree), dtype=jnp.int32))
-
-    a_min = jnp.max(q_norm + lamb * pi)
-    a_max = jnp.max(q_norm + lamb)
-
-    def get_pi_bar(a):
-        return lamb * pi / (a - q_norm)
-
-    def bin_search_condition(state):
-        a_min, a_max = state
-        return a_max - a_min > 0.01
-
-    def bin_search_body(state):
-        a_min, a_max = state
-        a = 0.5 * (a_min + a_max)
-
-        pi_bar = get_pi_bar(a)
-        pi_bar_norm = jnp.sum(pi_bar)
-
-        a_min, a_max = jax.lax.cond(
-            pred=pi_bar_norm > 1,
-            true_fun=lambda _: (a, a_max),
-            false_fun=lambda _: (a_min, a),
-            operand=None,
-        )
-        return a_min, a_max
-
-    a_min, a_max = jax.lax.while_loop(cond_fun=bin_search_condition, body_fun=bin_search_body, init_val=(a_min, a_max))
-    a = 0.5 * (a_min + a_max)
-    pi_bar = get_pi_bar(a)
-    pi_bar /= jnp.sum(pi_bar)  # Normalization found by binary search is imprecise
-
-    return pi_bar
-
-
 def pi_bar_search_policy(tree, node_index, c1):
     probs = get_pi_bar_policy(tree, node_index, c1)
-
-    # TODO: the original paper proposes sampling, we use deterministic sampling here
-    def child_score(action):
-        child_index = get_global_child_index(tree, node_index, action)
-        num_child_visits = tree['num_visits'][child_index]
-        return probs[action] / (num_child_visits + 1)
-
-    action_scores = jax.vmap(child_score)(jnp.arange(get_num_actions(tree), dtype=jnp.int32))
-    return jnp.argmax(action_scores)
+    child_visit_counts = get_action_visit_counts(tree, node_index)
+    return deterministic_sampling(probs, child_visit_counts)
 
 
 def puct_search_policy(tree, node_index, c1):
@@ -235,14 +241,9 @@ def puct_search_policy(tree, node_index, c1):
 
 
 def chance_outcome_search_policy(tree, node_index):
-    def child_score(chance_outcome):
-        child_index = get_global_child_index(tree, node_index, chance_outcome)
-        num_child_visits = tree['num_visits'][child_index]
-        parent_policy = tree['chance_outcome_prior_probs'][node_index]
-        return parent_policy[chance_outcome] / (num_child_visits + 1)
-
-    chance_outcome_scores = jax.vmap(child_score)(jnp.arange(get_num_chance_outcomes(tree), dtype=jnp.int32))
-    return jnp.argmax(chance_outcome_scores)
+    probs = tree['chance_outcome_prior_probs'][node_index]
+    visit_counts = get_chance_outcome_visit_counts(tree, node_index)
+    return deterministic_sampling(probs, visit_counts)
 
 
 def simulate(tree, puct_c1, search_policy):
@@ -394,15 +395,13 @@ def mcts(
     )
 
     if result_policy == 'visit_count':
-        root_mcts_policy_log_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
-        # Accumulated value at the root is exactly the visitation count policy value
-        root_mcts_value = get_state_value(tree=updated_tree, node_index=0)
+        root_mcts_policy_probs = get_visitation_based_policy(tree=updated_tree, node_index=0)
     elif result_policy == 'pi_bar':
-        pi_bar_policy = get_pi_bar_policy(tree=updated_tree, node_index=0, c1=puct_c1)
-        root_mcts_policy_log_probs = jnp.log(pi_bar_policy)
-        root_mcts_value = get_policy_value(tree=updated_tree, node_index=0, policy_probs=pi_bar_policy)
+        root_mcts_policy_probs = get_pi_bar_policy(tree=updated_tree, node_index=0, c1=puct_c1)
     else:
         raise ValueError(f'Unknown result policy: {result_policy}')
+    root_mcts_value = get_state_value(tree=updated_tree, node_index=0)
+    root_mcts_policy_log_probs = jnp.log(root_mcts_policy_probs)
 
     stats = {
         'mcts_search_depth': max_depth,

@@ -34,7 +34,8 @@ class SimpleBandit:
 
     def prediction(self, state):
         if state == self.initial_state:
-            action_log_probs, value = np.log([0.5, 0.5]), 0.0
+            action_log_probs = np.log([0.5, 0.5])
+            value = 0.5 * (0.3 * 1 + 0.7 * (-0.5)) + 0.5 * (0.6 * 0.5 + 0.4 * (-0.5))
         elif state.item() in [1, 2]:
             # Value of terminal states is zero
             action_log_probs, value = np.log([0.5, 0.5]), 0.0
@@ -131,7 +132,7 @@ def _test_bandit(
         )
         policy_probs = np.exp(policy_log_probs)
         assert np.argmax(policy_probs) == np.argmax(expected_arm_values)
-        assert np.abs(value - np.sum(policy_probs * expected_arm_values)) < 0.01
+        assert value >= search_tree['predicted_value'][0], 'There was no value improvement'
 
         if search_tree_filename is not None:
             visualize_search_tree(search_tree, search_tree_filename)
