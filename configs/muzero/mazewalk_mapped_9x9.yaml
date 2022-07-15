@@ -44,7 +44,6 @@ agent_config:
     normalize_state: true
     state_encoder_config:
       glyph_crop_size: [21, 30]
-      glyph_embedding_dim: 32
       num_memory_units: 8
       memory_dim: 32
       memory_update_num_heads: 8

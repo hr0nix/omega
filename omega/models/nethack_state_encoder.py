@@ -17,7 +17,6 @@ class PerceiverNethackStateEncoder(nn.Module):
     """
     glyph_crop_start: Optional[Tuple[int, int]] = None
     glyph_crop_size: Optional[Tuple[int, int]] = None
-    glyph_embedding_dim: int = 64
     num_memory_units: int = 128
     memory_dim: int = 64
     use_bl_stats: bool = True
@@ -49,13 +48,13 @@ class PerceiverNethackStateEncoder(nn.Module):
         else:
             self._glyph_pos_embedder = ItemEmbedder(
                 num_items=self._glyphs_size[0] * self._glyphs_size[1],
-                embedding_dim=self.glyph_embedding_dim,
+                embedding_dim=self.memory_dim,
                 name='glyph_pos_embedder',
             )
 
         self._glyph_embedder = nn.Embed(
             num_embeddings=nle.nethack.MAX_GLYPH + 1,
-            features=self.glyph_embedding_dim,
+            features=self.memory_dim,
             name='glyph_embedder',
         )
         self._memory_embedder = ItemEmbedder(

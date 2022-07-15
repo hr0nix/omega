@@ -36,7 +36,6 @@ agent_config:
       num_perceiver_self_attention_subblocks: 1
       num_memory_units: 3
       memory_dim: 16
-      glyph_embedding_dim: 16
       transformer_fc_inner_dim: 16
       use_fixed_positional_embeddings: false
       use_bl_stats: true
