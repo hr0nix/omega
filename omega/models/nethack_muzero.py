@@ -180,11 +180,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         # Fuse prev action embedding with prev memory
         prev_action_embedding = self._action_embedder(prev_action)
         prev_action_embedding = jnp.expand_dims(prev_action_embedding, axis=-2)
-        prev_memory_with_action = jnp.concatenate([prev_memory, prev_action_embedding], axis=-2)
+        latent_observation_with_action = jnp.concatenate([latent_observation, prev_action_embedding], axis=-2)
 
         # Attend from latent observation to prev memory
         representation = self._memory_aggregator(
-            latent_observation, prev_memory_with_action, deterministic=deterministic)
+            prev_memory, latent_observation_with_action, deterministic=deterministic)
         representation = self._maybe_normalize_state(representation)
 
         chex.assert_rank(representation, 3)
