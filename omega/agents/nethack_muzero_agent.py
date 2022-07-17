@@ -415,8 +415,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 continue
 
             next_trajectory_memory_before = next_trajectory_item.trajectory['memory_before']['memory']
-            memory_abs_diff = jnp.abs(
-                next_trajectory_memory_before[0] - updated_memory_state_after_last_ts_batch[batch_index])
+            memory_abs_diff = jnp.mean(jnp.abs(
+                next_trajectory_memory_before[0] - updated_memory_state_after_last_ts_batch[batch_index]))
             memory_abs_diff_per_trajectory.append(memory_abs_diff)
             next_trajectory_item.trajectory['memory_before']['memory'] = \
                 next_trajectory_item.trajectory['memory_before']['memory'].at[0].set(
