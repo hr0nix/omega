@@ -1,6 +1,6 @@
 train_config:
   num_days: 30000
-  epoch_every_num_days: 10
+  epoch_every_num_days: 50
   num_collection_steps: 16
   num_workers: 2
   num_envs: 32
@@ -21,7 +21,7 @@ agent_config:
   max_gradient_norm: 5.0
   discount_factor: 0.95
   num_train_unroll_steps: 5
-  reanalyze_batch_size: 192
+  reanalyze_batch_size: 64
   num_train_steps: 8
   num_mcts_simulations: 40
   mcts_puct_c1: 1.4
