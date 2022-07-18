@@ -397,14 +397,23 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     @timeit
     def _update_next_trajectory_memory(self, replayed_items, training_batch):
-        # Make sure terminal states are taken into account when updating memory
-        updated_memory_after_last_ts_batch = self.update_memory_batch(
-            pytree.timestamp_dim_slice(training_batch['memory_before'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
-        )
-        updated_memory_state_after_last_ts_batch = updated_memory_after_last_ts_batch['memory']
+        """
+        Given that we have an updated memory for each trajectory in the batch,
+        we can update initial memories of the trajectories that temporally follow the batch
+        (provided that they still are in the replay buffer).
+        """
+        @jax.jit
+        def get_updated_memory_state_after_last_ts_batch(training_batch):
+            # Make sure terminal states are taken into account when updating memory
+            updated_memory_after_last_ts_batch = self.update_memory_batch(
+                pytree.timestamp_dim_slice(training_batch['memory_before'], slice_idx=-1),
+                pytree.timestamp_dim_slice(training_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
+                pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
+                pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
+            )
+            return updated_memory_after_last_ts_batch['memory']
+
+        updated_memory_state_after_last_ts_batch = get_updated_memory_state_after_last_ts_batch(training_batch)
 
         memory_abs_diff_per_trajectory = []
         for batch_index, trajectory_item in enumerate(replayed_items):
@@ -413,7 +422,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
             if next_trajectory_item is None:
                 # Either this is the freshest trajectory, or the next trajectory
-                # has been evicted (this can happen when using clustered replay buffers).
+                # has been evicted (this can happen with some replay buffer types, i.e. clustering replay).
                 continue
 
             next_trajectory_memory_before = next_trajectory_item.trajectory['memory_before']['memory']
