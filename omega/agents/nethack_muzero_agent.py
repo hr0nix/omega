@@ -30,6 +30,7 @@ from .trainable_agent import JaxTrainableAgentBase
 class NethackMuZeroAgent(JaxTrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'lr': 1e-3,
+        'use_adaptive_lr': False,
         'num_lr_warmup_steps': 0,
         'discount_factor': 0.99,
         'model_config': {},
@@ -153,13 +154,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         )
 
     def _make_optimizer(self):
+        lr = self._config['lr']
+        if self._config['use_adaptive_lr']:
+            lr *= math.sqrt(self._config['reanalyze_batch_size'])
+            logging.info(f'Using adaptive learning rate: {lr}')
+
         lr_schedules = [
-            optax.linear_schedule(
-                init_value=0.0,
-                end_value=self._config['lr'],
-                transition_steps=self._config['num_lr_warmup_steps'],
-            ),
-            optax.constant_schedule(self._config['lr']),
+            optax.linear_schedule(init_value=0.0, end_value=lr, transition_steps=self._config['num_lr_warmup_steps']),
+            optax.constant_schedule(lr),
         ]
         lr_schedule = optax.join_schedules(
             schedules=lr_schedules, boundaries=[self._config['num_lr_warmup_steps']]
