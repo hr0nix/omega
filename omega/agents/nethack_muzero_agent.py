@@ -32,6 +32,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'lr': 1e-3,
         'use_adaptive_lr': False,
         'num_lr_warmup_steps': 0,
+        'weight_decay': 0.0,
         'discount_factor': 0.99,
         'model_config': {},
         'num_mcts_simulations': 30,
@@ -169,7 +170,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return optax.chain(
             optax.clip_by_global_norm(self._config['max_gradient_norm']),
-            optax.adamw(learning_rate=lr_schedule),
+            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
         )
 
     def _make_fake_observation(self):
