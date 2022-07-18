@@ -46,6 +46,8 @@ def run_experiment(args):
         subprocess_args.append('--log-memory-transfer')
     if args.log_profile:
         subprocess_args.append('--log-profile')
+    if args.log_compilation:
+        subprocess_args.append('--log-compilation')
     if args.disable_jit:
         subprocess_args.append('--disable-jit')
 
@@ -104,6 +106,7 @@ def parse_args():
     run_parser.add_argument('--gpu', metavar='GPU_NAME_OR_INDEX', dest='gpu', required=False, type=str, default='0')
     run_parser.add_argument('--log-memory-transfer', required=False, action='store_true', default=False)
     run_parser.add_argument('--log-profile', required=False, action='store_true', default=False)
+    run_parser.add_argument('--log-compilation', required=False, action='store_true', default=False)
     run_parser.add_argument('--disable-jit', required=False, action='store_true', default=False)
     run_parser.set_defaults(func=run_experiment)
 

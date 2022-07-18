@@ -80,6 +80,10 @@ def train_agent(args):
             logging.info('Memory transfer logging is enabled')
             jax.config.update('jax_transfer_guard', 'log')
 
+        if args.log_compilation:
+            logging.info('JIT compilation logging is enabled')
+            jax.config.update('jax_log_compiles', True)
+
         config = load_config(args.config)
         train_config = config['train_config']
 
@@ -157,6 +161,7 @@ def parse_args():
     train_parser.add_argument('--wandb-id-file', metavar='FILE', required=False)
     train_parser.add_argument('--log-memory-transfer', action='store_true', required=False, default=False)
     train_parser.add_argument('--log-profile', action='store_true', required=False, default=False)
+    train_parser.add_argument('--log-compilation', action='store_true', required=False, default=False)
     train_parser.add_argument('--disable-jit', action='store_true', required=False, default=False)
     train_parser.add_argument('--ray-local-mode', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
