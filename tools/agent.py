@@ -115,7 +115,7 @@ def train_agent(args):
 
             if (day + 1) % train_config['epoch_every_num_days'] == 0:
                 if args.wandb_id_file is not None:
-                    wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day)
+                    wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day, commit=True)
                 stats.print_summary(title='After {} days:'.format(day + 1))
                 if args.checkpoints is not None:
                     agent.save_to_checkpoint(args.checkpoints)
