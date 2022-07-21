@@ -6,8 +6,8 @@ from flax import linen as nn
 
 class GRUGate(nn.Module):
     """
-    GRU gating layer as proposed in TransformerXL paper (https://arxiv.org/pdf/1910.06764.pdf),
-    section 3.2
+    GRU gating layer as proposed in "Stabilizing Transformers for Reinforcement Learning" paper
+    (https://arxiv.org/pdf/1910.06764.pdf), section 3.2
     """
 
     kernel_init: Callable[[Any, Iterable[int], Any], Any] = nn.initializers.lecun_normal()

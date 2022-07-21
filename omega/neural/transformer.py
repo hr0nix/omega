@@ -24,8 +24,7 @@ class TransformerBlock(nn.Module):
         self._fc_inner = nn.Dense(self.fc_inner_dim)
         self._fc = nn.Dense(self.dim)
         self._att_norm_q = nn.LayerNorm()
-        self._att_norm_k = nn.LayerNorm()
-        self._att_norm_v = nn.LayerNorm()
+        self._att_norm_kv = nn.LayerNorm()
         self._fc_norm = nn.LayerNorm()
         self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
         self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
@@ -41,7 +40,7 @@ class TransformerBlock(nn.Module):
 
         l_prev = l
         q = self._att_norm_q(l)
-        kv = self._att_norm_k(keys_values)
+        kv = self._att_norm_kv(keys_values)
         l = self._att(q, kv)
         l = self._att_dropout(l, deterministic=deterministic)
         if self.use_gating:
