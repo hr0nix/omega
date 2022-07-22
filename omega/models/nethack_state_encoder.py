@@ -26,7 +26,7 @@ class PerceiverNethackStateEncoder(nn.Module):
     num_perceiver_self_attention_subblocks: int = 2
     transformer_dropout: float = 0.1
     transformer_fc_inner_dim: int = 256
-    transformer_use_gating: bool = False
+    transformer_gate: Optional[str] = None
     memory_update_num_heads: int = 8
     map_attention_num_heads: int = 2
     use_fixed_positional_embeddings: bool = False
@@ -68,7 +68,7 @@ class PerceiverNethackStateEncoder(nn.Module):
                 num_blocks=self.num_perceiver_self_attention_subblocks,
                 dim=self.memory_dim,
                 fc_inner_dim=self.transformer_fc_inner_dim,
-                use_gating=self.transformer_use_gating,
+                gate=self.transformer_gate,
                 num_heads=self.memory_update_num_heads,
                 dropout_rate=self.transformer_dropout,
                 deterministic=self.deterministic,
@@ -80,7 +80,7 @@ class PerceiverNethackStateEncoder(nn.Module):
             num_blocks=1,
             dim=self.memory_dim,
             fc_inner_dim=self.transformer_fc_inner_dim,
-            use_gating=self.transformer_use_gating,
+            gate=self.transformer_gate,
             num_heads=self.memory_update_num_heads,
             dropout_rate=self.transformer_dropout,
             deterministic=self.deterministic,
@@ -91,7 +91,7 @@ class PerceiverNethackStateEncoder(nn.Module):
                 num_blocks=1,
                 dim=self.memory_dim,
                 fc_inner_dim=self.transformer_fc_inner_dim,
-                use_gating=self.transformer_use_gating,
+                gate=self.transformer_gate,
                 num_heads=self.map_attention_num_heads,
                 dropout_rate=self.transformer_dropout,
                 deterministic=self.deterministic,

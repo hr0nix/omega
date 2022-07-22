@@ -55,9 +55,9 @@ agent_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      use_gating: true
+      gate: gru
     memory_aggregator_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      use_gating: true
+      gate: output

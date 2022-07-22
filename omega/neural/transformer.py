@@ -3,7 +3,7 @@ from typing import Optional, Dict
 
 from flax import linen as nn
 
-from .gating import GRUGate
+from .gating import GRUGate, OutputGate
 
 
 class TransformerBlock(nn.Module):
@@ -11,8 +11,7 @@ class TransformerBlock(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
-    use_gating: bool = False
-    gating_config: Dict = field(default_factory=dict)
+    gate: Optional[str] = None
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -28,9 +27,14 @@ class TransformerBlock(nn.Module):
         self._fc_norm = nn.LayerNorm()
         self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
         self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
-        if self.use_gating:
-            self._attention_gate = GRUGate(**self.gating_config)
-            self._fc_gate = GRUGate(**self.gating_config)
+        if self.gate == 'gru':
+            self._attention_gate = GRUGate()
+            self._fc_gate = GRUGate()
+        elif self.gate == 'output':
+            self._attention_gate = OutputGate()
+            self._fc_gate = OutputGate()
+        elif self.gate is not None:
+            raise ValueError('Unknown gate: {}'.format(self.gate))
 
     def __call__(self, queries, keys_values, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
@@ -43,7 +47,7 @@ class TransformerBlock(nn.Module):
         kv = self._att_norm_kv(keys_values)
         l = self._att(q, kv)
         l = self._att_dropout(l, deterministic=deterministic)
-        if self.use_gating:
+        if self.gate is not None:
             l = self._attention_gate(l_prev, l)
         else:
             l = l_prev + l
@@ -54,7 +58,7 @@ class TransformerBlock(nn.Module):
         l = nn.relu(l)
         l = self._fc(l)
         l = self._fc_dropout(l, deterministic=deterministic)
-        if self.use_gating:
+        if self.gate is not None:
             l = self._fc_gate(l_prev, l)
         else:
             l = l_prev + l
@@ -68,8 +72,8 @@ class TransformerNetBase(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
-    use_gating: bool = False
-    gating_config: Dict = field(default_factory=dict)
+    gate: Optional[str] = None
+    add_final_norm: bool = False
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -79,13 +83,14 @@ class TransformerNetBase(nn.Module):
                 fc_inner_dim=self.fc_inner_dim,
                 num_heads=self.num_heads,
                 dropout_rate=self.dropout_rate,
-                use_gating=self.use_gating,
-                gating_config=self.gating_config,
+                gate=self.gate,
                 deterministic=self.deterministic,
                 name=f'block_{block_idx}',
             )
             for block_idx in range(self.num_blocks)
         ]
+        if self.add_final_norm:
+            self._final_norm = nn.LayerNorm()
 
 
 class TransformerNet(TransformerNetBase):
@@ -95,6 +100,8 @@ class TransformerNet(TransformerNetBase):
         l = inputs
         for block_idx in range(self.num_blocks):
             l = self._blocks[block_idx](queries=l, keys_values=l, deterministic=deterministic)
+        if self.add_final_norm:
+            l = self._final_norm(l)
         return l
 
 
@@ -105,4 +112,6 @@ class CrossTransformerNet(TransformerNetBase):
         l = queries
         for block_idx in range(self.num_blocks):
             l = self._blocks[block_idx](queries=l, keys_values=keys_values, deterministic=deterministic)
+        if self.add_final_norm:
+            l = self._final_norm(l)
         return l

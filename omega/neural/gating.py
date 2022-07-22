@@ -4,6 +4,17 @@ import jax
 from flax import linen as nn
 
 
+class OutputGate(nn.Module):
+    """
+    Output gating layer as proposed in "Stabilizing Transformers for Reinforcement Learning" paper
+    (https://arxiv.org/pdf/1910.06764.pdf), section 3.2
+    """
+    @nn.compact
+    def __call__(self, x, y):
+        modulation = nn.Dense(features=x.shape[-1], name='modulation')(x)
+        return x + nn.sigmoid(modulation) * y
+
+
 class GRUGate(nn.Module):
     """
     GRU gating layer as proposed in "Stabilizing Transformers for Reinforcement Learning" paper
