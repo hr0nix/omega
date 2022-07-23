@@ -128,12 +128,9 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             return state
 
         # TODO: we normalize each memory cell independently, maybe we should normalize jointly
-        # max = jnp.max(state, axis=-1, keepdims=True)
-        # min = jnp.min(state, axis=-1, keepdims=True)
-        # return (state - min) / (max - min + 1e-6)
-
-        state = jnp.clip(state, -5, 5)
-        return state
+        max = jnp.max(state, axis=-1, keepdims=True)
+        min = jnp.min(state, axis=-1, keepdims=True)
+        return (state - min) / (max - min + 1e-6)
 
     def latent_state_shape(self):
         return self._state_encoder.num_memory_units, self._state_encoder.memory_dim
