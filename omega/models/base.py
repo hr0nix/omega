@@ -37,7 +37,7 @@ class ItemSelector(nn.Module):
     transformer_fc_inner_dim: int
     transformer_num_heads: int = 1
     transformer_dropout: float = 0.1
-    transformer_gate: Optional[str] = None
+    transformer_gate: str = 'skip_connection'
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -77,7 +77,7 @@ class ItemPredictor(nn.Module):
     transformer_fc_inner_dim: int
     transformer_num_heads: int = 1
     transformer_dropout: float = 0.1
-    transformer_gate: Optional[str] = None
+    transformer_gate: str = 'skip_connection'
     deterministic: Optional[bool] = None
 
     def setup(self):

@@ -60,4 +60,4 @@ agent_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      gate: output
+      gate: highway

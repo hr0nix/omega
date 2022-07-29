@@ -1,9 +1,8 @@
-from dataclasses import field
-from typing import Optional, Dict
+from typing import Optional
 
 from flax import linen as nn
 
-from .gating import GRUGate, OutputGate
+from .gating import Gate
 
 
 class TransformerBlock(nn.Module):
@@ -11,7 +10,7 @@ class TransformerBlock(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
-    gate: Optional[str] = None
+    gate: str = 'skip_connection'
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -27,14 +26,8 @@ class TransformerBlock(nn.Module):
         self._fc_norm = nn.LayerNorm()
         self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
         self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
-        if self.gate == 'gru':
-            self._attention_gate = GRUGate()
-            self._fc_gate = GRUGate()
-        elif self.gate == 'output':
-            self._attention_gate = OutputGate()
-            self._fc_gate = OutputGate()
-        elif self.gate is not None:
-            raise ValueError('Unknown gate: {}'.format(self.gate))
+        self._attention_gate = Gate(self.gate)
+        self._fc_gate = Gate(self.gate)
 
     def __call__(self, queries, keys_values, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
@@ -47,10 +40,7 @@ class TransformerBlock(nn.Module):
         kv = self._att_norm_kv(keys_values)
         l = self._att(q, kv)
         l = self._att_dropout(l, deterministic=deterministic)
-        if self.gate is not None:
-            l = self._attention_gate(l_prev, l)
-        else:
-            l = l_prev + l
+        l = self._attention_gate(l_prev, l)
 
         l_prev = l
         l = self._fc_norm(l)
@@ -58,10 +48,7 @@ class TransformerBlock(nn.Module):
         l = nn.relu(l)
         l = self._fc(l)
         l = self._fc_dropout(l, deterministic=deterministic)
-        if self.gate is not None:
-            l = self._fc_gate(l_prev, l)
-        else:
-            l = l_prev + l
+        l = self._fc_gate(l_prev, l)
 
         return l
 
@@ -72,7 +59,7 @@ class TransformerNetBase(nn.Module):
     fc_inner_dim: int
     num_heads: int = 1
     dropout_rate: float = 0.1
-    gate: Optional[str] = None
+    gate: str = 'skip_connection'
     add_final_norm: bool = False
     deterministic: Optional[bool] = None
 

@@ -26,7 +26,7 @@ class PerceiverNethackStateEncoder(nn.Module):
     num_perceiver_self_attention_subblocks: int = 2
     transformer_dropout: float = 0.1
     transformer_fc_inner_dim: int = 256
-    transformer_gate: Optional[str] = None
+    transformer_gate: str = 'skip_connection'
     memory_update_num_heads: int = 8
     map_attention_num_heads: int = 2
     use_fixed_positional_embeddings: bool = False
