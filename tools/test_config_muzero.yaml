@@ -31,7 +31,7 @@ agent_config:
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: true
-    normalize_state: true
+    normalize_state: false
     state_encoder_config:
       num_perceiver_blocks: 1
       num_perceiver_self_attention_subblocks: 1
@@ -60,4 +60,4 @@ agent_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      gate: highway
+      gate: 'highway'
