@@ -30,7 +30,9 @@ from .trainable_agent import JaxTrainableAgentBase
 class NethackMuZeroAgent(JaxTrainableAgentBase):
     CONFIG = flax.core.frozen_dict.FrozenDict({
         'lr': 1e-3,
+        'use_adaptive_lr': False,
         'num_lr_warmup_steps': 0,
+        'weight_decay': 0.0,
         'discount_factor': 0.99,
         'model_config': {},
         'num_mcts_simulations': 30,
@@ -153,13 +155,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         )
 
     def _make_optimizer(self):
+        lr = self._config['lr']
+        if self._config['use_adaptive_lr']:
+            lr *= math.sqrt(self._config['reanalyze_batch_size'])
+            logging.info(f'Using adaptive learning rate: {lr}')
+
         lr_schedules = [
-            optax.linear_schedule(
-                init_value=0.0,
-                end_value=self._config['lr'],
-                transition_steps=self._config['num_lr_warmup_steps'],
-            ),
-            optax.constant_schedule(self._config['lr']),
+            optax.linear_schedule(init_value=0.0, end_value=lr, transition_steps=self._config['num_lr_warmup_steps']),
+            optax.constant_schedule(lr),
         ]
         lr_schedule = optax.join_schedules(
             schedules=lr_schedules, boundaries=[self._config['num_lr_warmup_steps']]
@@ -167,7 +170,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return optax.chain(
             optax.clip_by_global_norm(self._config['max_gradient_norm']),
-            optax.adamw(learning_rate=lr_schedule),
+            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
         )
 
     def _make_fake_observation(self):
@@ -394,39 +397,71 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             self._replay_buffer.update_priority(item.id, priorities[index])
 
     @timeit
-    def _update_next_trajectory_memory(self, replayed_items, training_batch):
+    @partial(jax.jit, static_argnums=0)
+    def _get_updated_memory_state_after_last_ts_batch_jit(self, trajectory_batch):
         # Make sure terminal states are taken into account when updating memory
         updated_memory_after_last_ts_batch = self.update_memory_batch(
-            pytree.timestamp_dim_slice(training_batch['memory_before'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['actions'], slice_idx=-1),
-            pytree.timestamp_dim_slice(training_batch['done'], slice_idx=-1),
+            pytree.timestamp_dim_slice(trajectory_batch['memory_before'], slice_idx=-1),
+            pytree.timestamp_dim_slice(trajectory_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
+            pytree.timestamp_dim_slice(trajectory_batch['actions'], slice_idx=-1),
+            pytree.timestamp_dim_slice(trajectory_batch['done'], slice_idx=-1),
         )
-        updated_memory_state_after_last_ts_batch = updated_memory_after_last_ts_batch['memory']
+        return updated_memory_after_last_ts_batch['memory']
 
-        memory_abs_diff_per_trajectory = []
+    @timeit
+    @partial(jax.jit, static_argnums=0)
+    def _update_initial_trajectory_memory_jit(self, memories_to_update, update_source_ids, update_source):
+        def updater(memory_to_update, update_source_id):
+            update = update_source[update_source_id]
+            memory_abs_diff = jnp.mean(jnp.abs(memory_to_update[0] - update))
+            updated_memory = memory_to_update.at[0].set(update)
+            return updated_memory, memory_abs_diff
+        updated = jax.tree_map(updater, memories_to_update, update_source_ids)
+        updated_memories, memory_abs_diffs = jax.tree_transpose(
+            inner_treedef=jax.tree_structure([_ for _ in range(2)]),
+            outer_treedef=jax.tree_structure(memories_to_update),
+            pytree_to_transpose=updated
+        )
+        return updated_memories, pytree.array_mean(memory_abs_diffs)
+
+    @timeit
+    def _update_next_trajectory_memory(self, replayed_items, training_batch):
+        """
+        Given that we have an updated memory for each trajectory in the batch,
+        we can update initial memories of the trajectories that temporally follow the batch
+        (provided that they still are in the replay buffer).
+        """
+        updated_memory_state_after_last_ts_batch = self._get_updated_memory_state_after_last_ts_batch_jit(
+            training_batch)
+
+        items_to_update = []
+        memories_to_update = []
+        update_source_ids = []
         for batch_index, trajectory_item in enumerate(replayed_items):
             next_trajectory_id = self.TrajectoryId(
                 env_index=trajectory_item.id.env_index, step=trajectory_item.id.step + 1)
             next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
             if next_trajectory_item is None:
                 # Either this is the freshest trajectory, or the next trajectory
-                # has been evicted (this can happen when using clustered replay buffers).
+                # has been evicted (this can happen with some replay buffer types, i.e. clustering replay).
                 continue
 
-            next_trajectory_memory_before = next_trajectory_item.trajectory['memory_before']['memory']
-            memory_abs_diff = jnp.mean(jnp.abs(
-                next_trajectory_memory_before[0] - updated_memory_state_after_last_ts_batch[batch_index]))
-            memory_abs_diff_per_trajectory.append(memory_abs_diff)
-            next_trajectory_item.trajectory['memory_before']['memory'] = \
-                next_trajectory_item.trajectory['memory_before']['memory'].at[0].set(
-                    updated_memory_state_after_last_ts_batch[batch_index])
+            items_to_update.append(next_trajectory_item)
+            memories_to_update.append(next_trajectory_item.trajectory['memory_before']['memory'])
+            update_source_ids.append(batch_index)
 
         stats = {}
-        if len(memory_abs_diff_per_trajectory) > 0:
+        if len(memories_to_update) > 0:
+            updated_memories, avg_memory_update_abs_diff = self._update_initial_trajectory_memory_jit(
+                memories_to_update, update_source_ids, updated_memory_state_after_last_ts_batch)
+
+            for item, updated_memory in zip(items_to_update, updated_memories):
+                item.trajectory['memory_before']['memory'] = updated_memory
+
             stats = pytree.update(stats, {
-                'avg_memory_update_abs_diff': pytree.array_mean(memory_abs_diff_per_trajectory)
+                'avg_memory_update_abs_diff': avg_memory_update_abs_diff
             })
+
         return stats
 
     def _compute_mcts_statistics(

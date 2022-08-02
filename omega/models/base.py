@@ -37,7 +37,7 @@ class ItemSelector(nn.Module):
     transformer_fc_inner_dim: int
     transformer_num_heads: int = 1
     transformer_dropout: float = 0.1
-    transformer_use_gating: bool = False
+    transformer_gate: str = 'skip_connection'
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -48,7 +48,7 @@ class ItemSelector(nn.Module):
             num_heads=self.transformer_num_heads,
             dropout_rate=self.transformer_dropout,
             deterministic=self.deterministic,
-            use_gating=self.transformer_use_gating,
+            gate=self.transformer_gate,
             name='selection_transformer'.format(self.name),
         )
         self._logits_producer = nn.Dense(
@@ -77,7 +77,7 @@ class ItemPredictor(nn.Module):
     transformer_fc_inner_dim: int
     transformer_num_heads: int = 1
     transformer_dropout: float = 0.1
-    transformer_use_gating: bool = False
+    transformer_gate: str = 'skip_connection'
     deterministic: Optional[bool] = None
 
     def setup(self):
@@ -87,7 +87,7 @@ class ItemPredictor(nn.Module):
             fc_inner_dim=self.transformer_fc_inner_dim,
             num_heads=self.transformer_num_heads,
             dropout_rate=self.transformer_dropout,
-            use_gating=self.transformer_use_gating,
+            gate=self.transformer_gate,
             deterministic=self.deterministic,
             name='selection_transformer',
         )

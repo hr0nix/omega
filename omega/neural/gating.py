@@ -1,27 +1,79 @@
-from typing import Any, Callable, Iterable
-
 import jax
 from flax import linen as nn
 
 
-class GRUGate(nn.Module):
+class Gate(nn.Module):
     """
-    GRU gating layer as proposed in TransformerXL paper (https://arxiv.org/pdf/1910.06764.pdf),
-    section 3.2
+    A convenience class for selecting the desired gate type.
+    """
+    type: str
+
+    @nn.compact
+    def __call__(self, x, y):
+        if self.type == 'skip_connection':
+            return SkipConnectionGate(name='skip')(x, y)
+        elif self.type == 'gru':
+            return GRUGate(name='gru')(x, y)
+        elif self.type == 'output':
+            return OutputGate(name='output')(x, y)
+        elif self.type == 'highway':
+            return HighwayGate(name='highway')(x, y)
+        else:
+            raise ValueError('Unknown gate type: {}'.format(self.type))
+
+
+class SkipConnectionGate(nn.Module):
+    """
+    A regular skip-connection.
+    """
+    @nn.compact
+    def __call__(self, x, y):
+        return x + y
+
+
+class OutputGate(nn.Module):
+    """
+    Output gating layer as proposed in "Stabilizing Transformers for Reinforcement Learning" paper
+    (https://arxiv.org/pdf/1910.06764.pdf), section 3.2
+    """
+    @nn.compact
+    def __call__(self, x, y):
+        modulation = nn.sigmoid(nn.Dense(features=x.shape[-1], name='modulation')(x))
+        return x + modulation * y
+
+
+class HighwayGate(nn.Module):
+    """
+    Highway gating layer as proposed in "Highway Networks" paper
+    (https://arxiv.org/pdf/1505.00387.pdf)
     """
 
-    kernel_init: Callable[[Any, Iterable[int], Any], Any] = nn.initializers.lecun_normal()
-    bias_init: Callable[[Any, Iterable[int], Any], Any] = nn.initializers.zeros
+    bias_init: float = 3.0  # Initialize to pass information through the gate by default
+
+    @nn.compact
+    def __call__(self, x, y):
+        dense = nn.Dense(features=x.shape[-1], name='modulation', bias_init=nn.initializers.constant(self.bias_init))
+        modulation = nn.sigmoid(dense(x))
+        return modulation * x + (1 - modulation) * y
+
+
+class GRUGate(nn.Module):
+    """
+    GRU gating layer as proposed in "Stabilizing Transformers for Reinforcement Learning" paper
+    (https://arxiv.org/pdf/1910.06764.pdf), section 3.2
+    """
+
+    bias_init: float = 3.0  # Initialize to pass information through the gate by default
 
     @staticmethod
     def _mvp(m, v):
         return jax.lax.dot_general(v, m, dimension_numbers=(((v.ndim - 1,), (0,)), ((), ())))
 
     def _w_param(self, name, shape):
-        return self.param(name, self.kernel_init, shape)
+        return self.param(name, nn.initializers.lecun_normal(), shape)
 
     def _b_param(self, name, shape):
-        return self.param(name, self.bias_init, shape)
+        return self.param(name, nn.initializers.constant(self.bias_init), shape)
 
     @nn.compact
     def __call__(self, x, y):

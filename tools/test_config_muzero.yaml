@@ -20,7 +20,8 @@ train_config:
 agent_config:
   use_priorities: false
   update_next_trajectory_memory: true
-  lr: 0.001
+  lr: 0.000075
+  use_adaptive_lr: true
   discount_factor: 0.999
   num_train_steps: 1
   num_train_unroll_steps: 2
@@ -30,7 +31,7 @@ agent_config:
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: true
-    normalize_state: true
+    normalize_state: false
     state_encoder_config:
       num_perceiver_blocks: 1
       num_perceiver_self_attention_subblocks: 1
@@ -54,9 +55,9 @@ agent_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      use_gating: true
+      gate: gru
     memory_aggregator_config:
       num_blocks: 1
       num_heads: 1
       fc_inner_dim: 16
-      use_gating: true
+      gate: 'highway'

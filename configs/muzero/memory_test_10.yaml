@@ -17,12 +17,13 @@ train_config:
     good_total_reward_threshold: 0.5
 agent_config:
   use_priorities: false
+  update_next_trajectory_memory: true
   reward_values: [-0.01, 0.0, -1.0, 1.0]
   lr: 0.001
   max_gradient_norm: 5.0
   discount_factor: 0.95
   num_train_unroll_steps: 5
-  reanalyze_batch_size: 64
+  reanalyze_batch_size: 192
   num_train_steps: 8
   num_mcts_simulations: 40
   mcts_puct_c1: 1.4
@@ -41,7 +42,7 @@ agent_config:
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: false
-    normalize_state: true
+    normalize_state: false
     state_encoder_config:
       glyph_crop_start: [0, 0]
       glyph_crop_size: [21, 20]
@@ -66,7 +67,9 @@ agent_config:
       num_blocks: 2
       num_heads: 4
       fc_inner_dim: 128
+      gate: 'highway'
     memory_aggregator_config:
       num_blocks: 2
       num_heads: 4
       fc_inner_dim: 128
+      gate: 'highway'
