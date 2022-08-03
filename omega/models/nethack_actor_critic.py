@@ -71,18 +71,16 @@ class NethackPerceiverActorCriticModel(nn.Module):
             name='value_network',
         )
 
-    def __call__(self, current_state, next_state, rng, deterministic=None):
+    def __call__(self, current_state, next_state, deterministic=None):
         deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
 
-        rng, state_encoder_key = jax.random.split(rng)
-        memory = self._state_encoder(current_state, deterministic=deterministic, rng=state_encoder_key)
+        memory = self._state_encoder(current_state, deterministic=deterministic)
         batch_size = memory.shape[0]
 
         # Attend to latent memory from each regular output
-        rng, output_transformer_key = jax.random.split(rng)
         output_embeddings = self._output_embedder(batch_size)
         output_embeddings = self._output_transformer(
-            output_embeddings, memory, deterministic=deterministic, rng=output_transformer_key)
+            output_embeddings, memory, deterministic=deterministic)
 
         # Compute state values
         state_value = self._value_network(output_embeddings[:, 0, :])
@@ -92,17 +90,15 @@ class NethackPerceiverActorCriticModel(nn.Module):
         action_embeddings = self._action_embedder(batch_size)
 
         # Compute action probs
-        rng, policy_network_key = jax.random.split(rng)
         log_action_probs = self._policy_network(
-            action_embeddings, memory, deterministic=deterministic, rng=policy_network_key)
+            action_embeddings, memory, deterministic=deterministic)
 
         # Model inverse dynamics: predict the action that transitions into the next state
-        rng, next_state_encoder_key, dynamics_model_key = jax.random.split(rng, 3)
-        next_state_memory = self._state_encoder(next_state, deterministic=deterministic, rng=next_state_encoder_key)
+        next_state_memory = self._state_encoder(next_state, deterministic=deterministic)
         # TODO: positional embeddings don't allow to distinguish this memory and next
         combined_memory = jnp.concatenate([memory, next_state_memory], axis=1)
         action_embeddings = jax.lax.stop_gradient(action_embeddings)  # Do not update action embeddings
         log_id_action_probs = self._inverse_dynamics_model(
-            action_embeddings, combined_memory, deterministic=deterministic, rng=dynamics_model_key)
+            action_embeddings, combined_memory, deterministic=deterministic)
 
         return log_action_probs, log_id_action_probs, state_value
