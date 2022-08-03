@@ -26,7 +26,7 @@ class TransformerBlock(nn.Module):
         self._fc_norm = nn.LayerNorm()
         self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
         self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
-        self._attention_gate = Gate(self.gate)
+        self._attention_gate = Gate('skip_connection')  #self.gate)
         self._fc_gate = Gate(self.gate)
 
     def __call__(self, queries, keys_values, deterministic=None):
