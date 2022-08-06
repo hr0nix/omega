@@ -588,7 +588,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 # Encode latent states with VQ-VAE chance outcome encoder
                 def chance_outcome_encoder(state, rng):
                     return train_state.chance_outcome_encoder_fn(params, state, deterministic, rngs={'dropout': rng})
-                batch_chance_outcome_encoder_fn = jax.vmap(chance_outcome_encoder, in_axes=(0, 0), out_axes=0)
+                batch_chance_outcome_encoder_fn = jax.vmap(chance_outcome_encoder)
                 rng, chance_outcome_key = jax.random.split(rng)
                 chance_outcome_key_batch = jax.random.split(chance_outcome_key, num_timestamps)
                 encoded_chance_outcomes = batch_chance_outcome_encoder_fn(
@@ -652,7 +652,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         return train_state.prediction_fn(params, state, deterministic, rngs={'dropout': rng})
                     rng, prediction_key = jax.random.split(rng)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
-                    batch_prediction_fn = jax.vmap(prediction_fn, in_axes=(0, 0), out_axes=0)
+                    batch_prediction_fn = jax.vmap(prediction_fn)
                     policy_log_probs, state_values = batch_prediction_fn(current_latent_states, prediction_key_batch)
 
                     # Predict the afterstate
@@ -661,7 +661,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                             params, state, action, deterministic, rngs={'dropout': rng})
                     rng, afterstate_dynamics_key = jax.random.split(rng)
                     afterstate_dynamics_key_batch = jax.random.split(afterstate_dynamics_key, num_timestamps)
-                    batch_afterstate_dynamics_fn = jax.vmap(afterstate_dynamics_fn, in_axes=(0, 0, 0), out_axes=0)
+                    batch_afterstate_dynamics_fn = jax.vmap(afterstate_dynamics_fn)
                     latent_afterstates = batch_afterstate_dynamics_fn(
                         current_latent_states, actions, afterstate_dynamics_key_batch)
 
@@ -671,7 +671,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                             params, afterstate, deterministic, rngs={'dropout': rng})
                     rng, afterstate_prediction_key = jax.random.split(rng)
                     afterstate_prediction_key_batch = jax.random.split(afterstate_prediction_key, num_timestamps)
-                    batch_afterstate_prediction_fn = jax.vmap(afterstate_prediction_fn, in_axes=(0, 0), out_axes=0)
+                    batch_afterstate_prediction_fn = jax.vmap(afterstate_prediction_fn)
                     chance_outcome_log_probs, afterstate_values = batch_afterstate_prediction_fn(
                         latent_afterstates, afterstate_prediction_key_batch)
 
@@ -681,7 +681,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                             params, latent_afterstate, chance_outcome_one_hot, deterministic, rngs={'dropout': rng})
                     rng, dynamics_key = jax.random.split(rng)
                     dynamics_key_batch = jax.random.split(dynamics_key, num_timestamps)
-                    batch_dynamics_fn = jax.vmap(dynamics_fn, in_axes=(0, 0, 0), out_axes=0)
+                    batch_dynamics_fn = jax.vmap(dynamics_fn)
                     current_latent_states, reward_log_probs = batch_dynamics_fn(
                         latent_afterstates, chance_outcome_one_hot_targets, dynamics_key_batch)
 
@@ -751,7 +751,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'muzero_loss': loss,
                 }
 
-            batch_loss = jax.vmap(trajectory_loss, in_axes=(None, 0, 0), out_axes=(0, 0))
+            batch_loss = jax.vmap(trajectory_loss, in_axes=(None, 0, 0))
             batch_size = pytree.get_axis_dim(training_batch, axis=0)
             loss_key = jax.random.split(rng, batch_size)
             per_trajectory_losses, per_trajectory_loss_details = batch_loss(params, training_batch, loss_key)
