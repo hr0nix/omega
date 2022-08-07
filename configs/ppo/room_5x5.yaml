@@ -1,0 +1,36 @@
+train_config:
+  num_days: 30000
+  epoch_every_num_days: 50
+  num_collection_steps: 16
+  num_workers: 2
+  num_envs: 32
+  allow_to_act_in_terminal_state_once: false
+  env_name: 'MiniHack-Room-5x5-v0'
+  observation_keys: ['glyphs', 'blstats']
+  agent_type: 'ppo'
+agent_config:
+  value_function_loss_weight: 1.0
+  entropy_regularizer_weight: 0.01
+  inverse_dynamics_loss_weight: 0.0
+  lr: 0.001
+  discount_factor: 0.95
+  gae_lambda: 0.95
+  normalize_advantage: true
+  gradient_clipnorm: 5.0
+  minibatch_size: 64
+  num_minibatches_per_train_step: 8
+  ppo_eps: 0.25
+  model_config:
+    state_encoder_config:
+      glyph_crop_size: [ 21, 30 ]
+      num_memory_units: 8
+      memory_dim: 32
+      memory_update_num_heads: 8
+      map_attention_num_heads: 2
+      num_perceiver_blocks: 1
+      num_perceiver_self_attention_subblocks: 2
+      transformer_fc_inner_dim: 128
+      transformer_dropout: 0.0
+      use_bl_stats: true
+      use_fixed_positional_embeddings: false
+  use_rnd: false
