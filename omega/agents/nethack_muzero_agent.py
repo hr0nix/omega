@@ -44,6 +44,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'num_train_unroll_steps': 5,
         'num_train_steps': 1,
         'reanalyze_batch_size': 8,
+        'warmup_days': 0,
         'chance_outcome_commitment_loss_weight': 50.0,
         'chance_outcome_prediction_loss_weight': 1.0,
         'policy_loss_weight': 1.0,
@@ -261,26 +262,27 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         current_batch_stats = self._get_current_batch_stats_jit(trajectory_batch)
         self._add_to_replay_buffer(trajectory_batch)
 
-        stats_per_train_step = []
-        for train_step in range(self._config['num_train_steps']):
-            training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
-            training_stats, per_trajectory_loss_details = self._train(training_batch)
-            train_step_stats = pytree.update(reanalyse_stats, training_stats)
+        stats = pytree.to_numpy(current_batch_stats)
 
-            if self._config['use_priorities']:
-                self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
+        if self._current_train_step >= self._config['warmup_days']:
+            stats_per_train_step = []
+            for train_step in range(self._config['num_train_steps']):
+                training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
+                training_stats, per_trajectory_loss_details = self._train(training_batch)
+                train_step_stats = pytree.update(reanalyse_stats, training_stats)
 
-            if self._config['update_next_trajectory_memory']:
-                memory_stats = self._update_next_trajectory_memory(batch_items, training_batch)
-                train_step_stats = pytree.update(train_step_stats, memory_stats)
+                if self._config['use_priorities']:
+                    self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
 
-            stats_per_train_step.append(train_step_stats)
+                if self._config['update_next_trajectory_memory']:
+                    memory_stats = self._update_next_trajectory_memory(batch_items, training_batch)
+                    train_step_stats = pytree.update(train_step_stats, memory_stats)
+
+                stats_per_train_step.append(train_step_stats)
+
+            stats = pytree.update(stats, pytree.array_mean(stats_per_train_step, result_backend='numpy'))
 
         self._current_train_step += 1
-
-        stats = pytree.array_mean(stats_per_train_step, result_backend='numpy')
-        stats = pytree.update(stats, pytree.to_numpy(current_batch_stats))
-
         return stats
 
     @timeit
