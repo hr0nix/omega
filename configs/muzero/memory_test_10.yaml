@@ -25,6 +25,7 @@ agent_config:
   num_train_unroll_steps: 5
   reanalyze_batch_size: 192
   num_train_steps: 8
+  warmup_days: 50
   num_mcts_simulations: 40
   mcts_puct_c1: 1.4
   mcts_dirichlet_noise_alpha: 0.35
@@ -53,6 +54,7 @@ agent_config:
       num_perceiver_blocks: 1
       num_perceiver_self_attention_subblocks: 2
       transformer_fc_inner_dim: 128
+      transformer_dropout: 0.0
       use_bl_stats: true
       use_fixed_positional_embeddings: false
     scalar_predictor_config:
@@ -68,8 +70,10 @@ agent_config:
       num_heads: 4
       fc_inner_dim: 128
       gate: 'highway'
+      dropout_rate: 0.0
     memory_aggregator_config:
       num_blocks: 2
       num_heads: 4
       fc_inner_dim: 128
       gate: 'highway'
+      dropout_rate: 0.0

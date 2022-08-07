@@ -68,23 +68,27 @@ class NethackPPOAgent(JaxTrainableAgentBase):
     def _build_model(self, state_batch):
         model = self._model_factory(num_actions=self.action_space.n, **self._config['model_config'])
         model_params = model.init(
-            self.next_random_key(), current_state=state_batch, next_state=state_batch,
-            deterministic=False, rng=self.next_random_key())
+            {'params': self.next_random_key(), 'dropout': self.next_random_key()},
+            current_state=state_batch, next_state=state_batch,
+            deterministic=False)
 
         optimizer = optax.adam(learning_rate=self._config['lr'])
 
-        train_state = self.TrainState.create(apply_fn=model.apply, params=model_params, tx=optimizer)
+        train_state = self.TrainState.create(
+            apply_fn=model.apply, params=model_params, tx=optimizer)
 
         return model, train_state
 
     def _build_rnd_model(self, state_batch):
         rnd_model = NethackRNDNetworkPair(**self._config['rnd_model_config'])
         rnd_model_params = rnd_model.init(
-            self.next_random_key(), state_batch, deterministic=False, rng=self.next_random_key())
+            {'params': self.next_random_key(), 'dropout': self.next_random_key()}, state_batch,
+            deterministic=False)
 
         optimizer = optax.adam(learning_rate=self._config['rnd_lr'])
 
-        rnd_train_state = self.TrainState.create(apply_fn=rnd_model.apply, params=rnd_model_params, tx=optimizer)
+        rnd_train_state = self.TrainState.create(
+            apply_fn=rnd_model.apply, params=rnd_model_params, tx=optimizer)
 
         return rnd_model, rnd_train_state
 
@@ -129,22 +133,24 @@ class NethackPPOAgent(JaxTrainableAgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def _act_on_batch_jitted(self, train_state, rnd_train_state, observation_batch, rng):
-        rng, subkey1, subkey2 = jax.random.split(rng, 3)
+        rng, model_key, sample_action_key = jax.random.split(rng, 3)
         log_action_probs, _, state_values = train_state.apply_fn(
             train_state.params,
             current_state=observation_batch,
             next_state=observation_batch,  # Pass current state as the next state, inverse dynamics is irrelevant here
-            deterministic=True, rng=subkey1)
+            deterministic=True,
+            rngs={'dropout': model_key},
+        )
         act_metadata = {
             'log_action_probs': log_action_probs,
             'state_values': state_values,
         }
-        selected_actions = jax.random.categorical(subkey2, log_action_probs)
+        selected_actions = jax.random.categorical(sample_action_key, log_action_probs)
 
         if self._config['use_rnd']:
-            rng, subkey = jax.random.split(rng)
+            rng, rnd_model_key = jax.random.split(rng)
             rnd_loss = rnd_train_state.apply_fn(
-                rnd_train_state.params, observation_batch, deterministic=True, rng=subkey)
+                rnd_train_state.params, observation_batch, deterministic=True, rngs={'dropout': rnd_model_key})
             act_metadata = pytree.update(act_metadata, {
                 'rnd_loss': rnd_loss,
             })
@@ -152,12 +158,10 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         return selected_actions, act_metadata
 
     def _train_on_minibatch(self, train_state, rnd_train_state, trajectory_minibatch, rng):
-        grad_key, rnd_grad_key = jax.random.split(rng)
-
         def loss_function(params, train_state, trajectory_minibatch, rng):
             log_action_probs, log_id_action_probs, state_values = train_state.apply_fn(
                 params, trajectory_minibatch['current_state'], trajectory_minibatch['next_state'],
-                deterministic=False, rng=rng)
+                deterministic=False, rngs={'dropout': rng})
 
             minibatch_range = jnp.arange(0, log_action_probs.shape[0])
 
@@ -190,6 +194,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
             }
 
         grad_and_stats_func = jax.grad(loss_function, argnums=0, has_aux=True)
+        rng, grad_key = jax.random.split(rng)
         grads, stats = grad_and_stats_func(
             train_state.params, train_state, trajectory_minibatch, grad_key)
         if self._config['gradient_clipnorm'] is not None:
@@ -199,13 +204,14 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         if self._config['use_rnd']:
             def rnd_loss_function(rnd_params, rnd_train_state, trajectory_minibatch, rng):
                 rnd_loss = rnd_train_state.apply_fn(
-                    rnd_params, trajectory_minibatch['next_state'], deterministic=False, rng=rng)
+                    rnd_params, trajectory_minibatch['next_state'], deterministic=False, rngs={'dropout': rng})
                 rnd_loss = jnp.mean(rnd_loss)
                 return rnd_loss, {
                     'rnd_loss': rnd_loss,
                 }
 
             rnd_grad_and_stats = jax.grad(rnd_loss_function, argnums=0, has_aux=True)
+            rng, rnd_grad_key = jax.random.split(rng)
             rnd_grads, rnd_stats = rnd_grad_and_stats(
                 rnd_train_state.params, rnd_train_state, trajectory_minibatch, rnd_grad_key)
             rnd_train_state = rnd_train_state.apply_gradients(grads=rnd_grads)
@@ -287,14 +293,14 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         def train_step_on_minibatch_body(carry, nothing):
             rng, train_state, rnd_train_state = carry
 
-            rng, sample_key, train_key = jax.random.split(rng, 3)
+            rng, train_key, sample_key = jax.random.split(rng, 3)
             trajectory_minibatch = self._sample_minibatch(trajectory_batch, sample_key)
             train_state, rnd_train_state, train_stats = self._train_on_minibatch(
                 train_state, rnd_train_state, trajectory_minibatch, train_key)
 
             return (rng, train_state, rnd_train_state), train_stats
 
-        (rng, train_state, rnd_train_state), train_stats_per_minibatch = jax.lax.scan(
+        (_, train_state, rnd_train_state), train_stats_per_minibatch = jax.lax.scan(
             f=train_step_on_minibatch_body,
             init=(rng, train_state, rnd_train_state),
             xs=None, length=self._config['num_minibatches_per_train_step'],

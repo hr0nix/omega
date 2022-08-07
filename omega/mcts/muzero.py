@@ -208,7 +208,8 @@ def make_tree(
         'min_max_value': jnp.zeros(2, dtype=jnp.float32),
     }
 
-    action_log_probs, root_value = prediction_fn(initial_state)
+    rng, prediction_key = jax.random.split(rng)
+    action_log_probs, root_value = prediction_fn(initial_state, prediction_key)
 
     return init_node(
         tree=tree, node_index=0, is_chance=False,
@@ -280,7 +281,7 @@ def simulate(tree, puct_c1, search_policy):
 
 
 def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_fn, afterstate_dynamics_fn, rng):
-    rng, init_node_key = jax.random.split(rng, 2)
+    init_node_key, expansion_dynamics_key, expansion_prediction_key = jax.random.split(rng, 3)
 
     parent_index = get_global_parent_index(tree, node_index)
     parent_state = tree['state'][parent_index]
@@ -304,8 +305,8 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     def chance_node_expansion(_):
         num_chance_outcomes = get_num_chance_outcomes(tree)
         chance_outcome_one_hot = jax.nn.one_hot(local_child_index, num_classes=num_chance_outcomes, dtype=jnp.float32)
-        child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot)
-        action_log_probs, value = prediction_fn(child_state)
+        child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot, expansion_dynamics_key)
+        action_log_probs, value = prediction_fn(child_state, expansion_prediction_key)
         return child_state, reward, value, action_log_probs, False
 
     child_state, reward, value, action_log_probs, _ = jax.lax.while_loop(
@@ -318,8 +319,8 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
         return jnp.logical_and(jnp.logical_not(parent_is_chance), is_first_iter)
 
     def regular_node_expansion(_):
-        afterstate = afterstate_dynamics_fn(parent_state, local_child_index)
-        chance_outcome_log_probs, value = afterstate_prediction_fn(afterstate)
+        afterstate = afterstate_dynamics_fn(parent_state, local_child_index, expansion_dynamics_key)
+        chance_outcome_log_probs, value = afterstate_prediction_fn(afterstate, expansion_prediction_key)
         return afterstate, value, chance_outcome_log_probs, False
 
     child_state, value, chance_outcome_log_probs, _ = jax.lax.while_loop(

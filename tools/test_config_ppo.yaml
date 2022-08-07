@@ -4,6 +4,7 @@ train_config:
   num_collection_steps: 4
   num_envs: 2
   num_workers: 2
+  allow_to_act_in_terminal_state_once: false
   env_name: 'MiniHack-Room-Random-5x5-v0'
   use_dense_staircase_reward: false
   observation_keys: ['glyphs', 'blstats']
