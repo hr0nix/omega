@@ -45,7 +45,7 @@ class NethackMuZeroModelBase(nn.Module):
 class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
     num_actions: int
     num_chance_outcomes: int
-    reward_dim: int
+    value_reward_dim: int
     context_dependent_state_encoder: bool = False
     normalize_state: bool = False
     state_encoder_config: Dict = field(default_factory=dict)
@@ -99,9 +99,17 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             **self.dynamics_transformer_config,
             name='afterstate_dynamics_transformer')
         self._reward_predictor = ItemPredictor(
-            num_outputs=self.reward_dim, transformer_dim=self._state_encoder.memory_dim,
+            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='reward_predictor')
+        self._value_predictor = ItemPredictor(
+            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
+            **self.scalar_predictor_config,
+            name='value_predictor')
+        self._afterstate_value_predictor = ItemPredictor(
+            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
+            **self.scalar_predictor_config,
+            name='afterstate_value_predictor')
         self._chance_outcome_predictor = ItemSelector(
             transformer_dim=self._state_encoder.memory_dim,
             **self.action_outcome_predictor_config,
@@ -110,14 +118,6 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             num_outputs=self.num_chance_outcomes, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='chance_outcome_encoder_net')
-        self._value_predictor = ItemPredictor(
-            num_outputs=1, transformer_dim=self._state_encoder.memory_dim,
-            **self.scalar_predictor_config,
-            name='value_predictor')
-        self._afterstate_value_predictor = ItemPredictor(
-            num_outputs=1, transformer_dim=self._state_encoder.memory_dim,
-            **self.scalar_predictor_config,
-            name='afterstate_value_predictor')
         self._policy_network = ItemSelector(
             transformer_dim=self._state_encoder.memory_dim,
             **self.action_outcome_predictor_config,
@@ -188,7 +188,6 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         representation = self._maybe_normalize_state(representation)
 
         chex.assert_rank(representation, 3)
-        chex.assert_axis_dimension(representation, 0, 1)
 
         # Get rid of the no longer needed batch dimension
         representation = pytree.squeeze(representation, axis=0)
@@ -246,8 +245,6 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         log_reward_probs = jax.nn.log_softmax(log_reward_probs, axis=-1)
 
         chex.assert_rank([next_latent_state, log_reward_probs], [3, 2])
-        chex.assert_axis_dimension(next_latent_state, 0, 1)
-        chex.assert_axis_dimension(log_reward_probs, 0, 1)
         return (
             pytree.squeeze(next_latent_state, axis=0),
             pytree.squeeze(log_reward_probs, axis=0),
@@ -269,17 +266,13 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         all_action_embeddings = pytree.expand_dims(all_action_embeddings, axis=0)
         log_action_probs = self._policy_network(all_action_embeddings, latent_state, deterministic=deterministic)
 
-        value = jnp.squeeze(
-            self._value_predictor(latent_state, deterministic=deterministic),
-            axis=-1
-        )
+        log_value_probs = self._value_predictor(latent_state, deterministic=deterministic)
+        log_value_probs = jax.nn.log_softmax(log_value_probs, axis=-1)
 
-        chex.assert_rank([log_action_probs, value], [2, 1])
-        chex.assert_axis_dimension(log_action_probs, 0, 1)
-        chex.assert_axis_dimension(value, 0, 1)
+        chex.assert_rank([log_action_probs, log_value_probs], [2, 2])
         return (
             pytree.squeeze(log_action_probs, axis=0),
-            pytree.squeeze(value, axis=0)
+            pytree.squeeze(log_value_probs, axis=0)
         )
 
     def afterstate_prediction(self, latent_afterstate, deterministic=None):
@@ -300,15 +293,11 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         log_chance_outcome_probs = self._chance_outcome_predictor(
             all_chance_outcome_embeddings, latent_afterstate, deterministic=deterministic)
 
-        afterstate_value = jnp.squeeze(
-            self._afterstate_value_predictor(latent_afterstate, deterministic=deterministic),
-            axis=-1,
-        )
+        log_afterstate_value_probs = self._afterstate_value_predictor(latent_afterstate, deterministic=deterministic)
+        log_afterstate_value_probs = jax.nn.log_softmax(log_afterstate_value_probs, axis=-1)
 
-        chex.assert_rank([log_chance_outcome_probs, afterstate_value], [2, 1])
-        chex.assert_axis_dimension(log_chance_outcome_probs, 0, 1)
-        chex.assert_axis_dimension(afterstate_value, 0, 1)
+        chex.assert_rank([log_chance_outcome_probs, log_afterstate_value_probs], [2, 2])
         return (
             pytree.squeeze(log_chance_outcome_probs, axis=0),
-            pytree.squeeze(afterstate_value, axis=0)
+            pytree.squeeze(log_afterstate_value_probs, axis=0)
         )
