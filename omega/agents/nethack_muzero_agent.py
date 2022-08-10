@@ -640,7 +640,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     axis=0,
                 )
 
-                value_l2_loss = 0.0  # TODO: remove me
+                # TODO: remove me
+                afterstate_value_l2_loss = 0.0
+                value_l2_loss = 0.0
+                reward_l2_loss = 0.0
                 value_loss = 0.0
                 afterstate_value_loss = 0.0
                 reward_loss = 0.0
@@ -721,10 +724,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     step_policy_loss = jax.vmap(rlax.categorical_cross_entropy)(policy_targets, policy_log_probs)
 
                     # TODO: remove me, just for debug
+                    afterstate_value_scalar = self._decode_value_or_reward(afterstate_value_log_probs)
                     value_scalar = self._decode_value_or_reward(state_value_log_probs)
+                    reward_scalar = self._decode_value_or_reward(reward_log_probs)
+                    afterstate_target_scalar = trajectory['training_targets']['afterstate_value_scalar'][:, unroll_step]
                     value_target_scalar = trajectory['training_targets']['value_scalar'][:, unroll_step]
+                    reward_target_scalar = trajectory['training_targets']['rewards_scalar'][:, unroll_step]
+                    step_afterstate_value_l2_loss = rlax.l2_loss(afterstate_value_scalar, afterstate_target_scalar)
                     step_value_l2_loss = rlax.l2_loss(value_scalar, value_target_scalar)
+                    step_reward_l2_loss = rlax.l2_loss(reward_scalar, reward_target_scalar)
+                    afterstate_value_l2_loss += jnp.sum(current_state_valid_mask * step_afterstate_value_l2_loss) * current_state_valid_scale
                     value_l2_loss += jnp.sum(current_state_valid_mask * step_value_l2_loss) * current_state_valid_scale
+                    reward_l2_loss += jnp.sum(current_state_valid_mask * step_reward_l2_loss) * current_state_valid_scale
 
                     # Mask out every timestamp for which we don't have a valid target
                     # Also apply loss scaling to make loss timestamp-independent
@@ -760,11 +771,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
                 value_loss /= num_unroll_steps
-                value_l2_loss /= num_unroll_steps  # TODO: remove me
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
                 chance_outcome_prediction_loss /= num_unroll_steps
                 state_similarity_loss /= num_unroll_steps
+                # TODO: remove me
+                afterstate_value_l2_loss /= num_unroll_steps
+                value_l2_loss /= num_unroll_steps
+                reward_l2_loss /= num_unroll_steps
                 loss = (
                     self._config['afterstate_value_loss_weight'] * afterstate_value_loss +
                     self._config['value_loss_weight'] * value_loss +
@@ -778,8 +792,11 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 return loss, {
                     'afterstate_value_loss': afterstate_value_loss,
                     'value_loss': value_loss,
-                    'value_l2_loss': value_l2_loss,  # TODO: remove em
                     'reward_loss': reward_loss,
+                    # TODO: remove me
+                    'afterstate_value_l2_loss': afterstate_value_l2_loss,
+                    'value_l2_loss': value_l2_loss,
+                    'reward_l2_loss': reward_l2_loss,
                     'policy_loss': policy_loss,
                     'chance_outcome_prediction_loss': chance_outcome_prediction_loss,
                     'chance_outcome_commitment_loss': chance_outcome_commitment_loss,
