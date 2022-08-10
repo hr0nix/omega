@@ -332,14 +332,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def _decode_value_or_reward(self, value_or_reward_log_probs):
         chex.assert_axis_dimension(value_or_reward_log_probs, -1, self._config['value_reward_bins'])
 
-        encoded_value_or_reward_probs = jax.nn.softmax(value_or_reward_log_probs)
         result = rlax.transform_from_2hot(
-            encoded_value_or_reward_probs,
+            jax.nn.softmax(value_or_reward_log_probs),
             min_value=self._config['value_reward_min_max'][0],
             max_value=self._config['value_reward_min_max'][1],
             num_bins=self._config['value_reward_bins'],
         )
-        return jnp.squeeze(result, axis=-1)
+        if len(value_or_reward_log_probs.shape) == 1:
+            # Work around a weird behavior of rlax.transform_from_2hot which doesn't return scalar outputs
+            chex.assert_rank(result, 1)
+            chex.assert_axis_dimension(result, 0, 1)
+            result = jnp.squeeze(result, axis=-1)
+        return result
 
     @staticmethod
     def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
