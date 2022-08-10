@@ -109,3 +109,48 @@ class ItemPredictor(nn.Module):
         outputs = jnp.squeeze(outputs, -1)
 
         return outputs
+
+
+class OneToManyAttentionItemPredictor(nn.Module):
+    """
+    Given memory and a number of output positions, computes the outputs using one-to-many attention from a learned
+    embedding vector.
+    """
+    num_outputs: int
+    transformer_dim: int
+    transformer_num_blocks: int
+    transformer_fc_inner_dim: int
+    transformer_num_heads: int = 1
+    transformer_dropout: float = 0.1
+    transformer_gate: str = 'skip_connection'
+    deterministic: Optional[bool] = None
+
+    def setup(self):
+        self._output_transformer = CrossTransformerNet(
+            num_blocks=self.transformer_num_blocks,
+            dim=self.transformer_dim,
+            fc_inner_dim=self.transformer_fc_inner_dim,
+            num_heads=self.transformer_num_heads,
+            dropout_rate=self.transformer_dropout,
+            gate=self.transformer_gate,
+            deterministic=self.deterministic,
+            name='selection_transformer',
+        )
+        self._output_embedder = ItemEmbedder(
+            num_items=1, embedding_dim=self.transformer_dim,
+            name='output_embedder'
+        )
+        self._scalar_producer = nn.Dense(
+            features=self.num_outputs,
+            name='scalar_producer',
+        )
+
+    def __call__(self, memory, deterministic=None):
+        deterministic = nn.module.merge_param('deterministic', self.deterministic, deterministic)
+
+        query_embeddings = self._output_embedder(batch_size=memory.shape[0])
+        query_embeddings = self._output_transformer(query_embeddings, memory, deterministic=deterministic)
+        query_embeddings = jnp.squeeze(query_embeddings, axis=-2)  # Remove the timestamp dimension
+        outputs = self._scalar_producer(query_embeddings)
+
+        return outputs

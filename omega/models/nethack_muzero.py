@@ -10,7 +10,7 @@ from omega.neural import CrossTransformerNet
 
 from ..utils import pytree
 from .nethack_state_encoder import PerceiverNethackStateEncoder
-from .base import ItemSelector, ItemPredictor
+from .base import ItemSelector, ItemPredictor, OneToManyAttentionItemPredictor
 
 
 class NethackMuZeroModelBase(nn.Module):
@@ -98,15 +98,15 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             dim=self._state_encoder.memory_dim,
             **self.dynamics_transformer_config,
             name='afterstate_dynamics_transformer')
-        self._reward_predictor = ItemPredictor(
+        self._reward_predictor = OneToManyAttentionItemPredictor(
             num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='reward_predictor')
-        self._value_predictor = ItemPredictor(
+        self._value_predictor = OneToManyAttentionItemPredictor(
             num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='value_predictor')
-        self._afterstate_value_predictor = ItemPredictor(
+        self._afterstate_value_predictor = OneToManyAttentionItemPredictor(
             num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='afterstate_value_predictor')
@@ -114,7 +114,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             transformer_dim=self._state_encoder.memory_dim,
             **self.action_outcome_predictor_config,
             name='chance_outcome_predictor')
-        self._chance_outcome_encoder = ItemPredictor(
+        self._chance_outcome_encoder = OneToManyAttentionItemPredictor(
             num_outputs=self.num_chance_outcomes, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
             name='chance_outcome_encoder_net')
