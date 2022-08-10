@@ -38,10 +38,11 @@ def run_experiment(args):
     subprocess_args = [
         'python3.8', os.path.join(cur_dir, 'agent.py'), 'train',
         '--config', os.path.join(args.dir, CONFIG_FILENAME),
-        '--checkpoints', os.path.join(args.dir, CHECKPOINTS_DIR),
         '--episodes', os.path.join(args.dir, EPISODES_DIR),
         '--wandb-id-file', os.path.join(args.dir, WANDB_ID_FILE),
     ]
+    if not args.disable_checkpoints:
+        subprocess_args.extend(['--checkpoints', os.path.join(args.dir, CHECKPOINTS_DIR)])
     if args.log_memory_transfer:
         subprocess_args.append('--log-memory-transfer')
     if args.log_profile:
@@ -108,6 +109,7 @@ def parse_args():
     run_parser.add_argument('--log-profile', required=False, action='store_true', default=False)
     run_parser.add_argument('--log-compilation', required=False, action='store_true', default=False)
     run_parser.add_argument('--disable-jit', required=False, action='store_true', default=False)
+    run_parser.add_argument('--disable-checkpoints', required=False, action='store_true', default=False)
     run_parser.set_defaults(func=run_experiment)
 
     cleanup_parser = subparsers.add_parser('cleanup', help='Cleanup an experiment dir')
