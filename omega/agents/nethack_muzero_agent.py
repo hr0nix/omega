@@ -636,6 +636,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     axis=0,
                 )
 
+                value_l2_loss = 0.0  # TODO: remove me
                 value_loss = 0.0
                 afterstate_value_loss = 0.0
                 reward_loss = 0.0
@@ -715,6 +716,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     step_reward_loss = jax.vmap(rlax.categorical_cross_entropy)(reward_targets, reward_log_probs)
                     step_policy_loss = jax.vmap(rlax.categorical_cross_entropy)(policy_targets, policy_log_probs)
 
+                    # TODO: remove me, just for debug
+                    value_scalar = self._decode_value_or_reward(state_value_log_probs)
+                    value_target_scalar = trajectory['training_targets']['value_scalar'][:, unroll_step]
+                    step_value_l2_loss = rlax.l2_loss(value_scalar, value_target_scalar)
+                    value_l2_loss += jnp.sum(current_state_valid_mask * step_value_l2_loss) * current_state_valid_scale
+
                     # Mask out every timestamp for which we don't have a valid target
                     # Also apply loss scaling to make loss timestamp-independent
 
@@ -749,6 +756,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
                 value_loss /= num_unroll_steps
+                value_l2_loss /= num_unroll_steps  # TODO: remove me
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
                 chance_outcome_prediction_loss /= num_unroll_steps
@@ -766,6 +774,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 return loss, {
                     'afterstate_value_loss': afterstate_value_loss,
                     'value_loss': value_loss,
+                    'value_l2_loss': value_l2_loss,  # TODO: remove em
                     'reward_loss': reward_loss,
                     'policy_loss': policy_loss,
                     'chance_outcome_prediction_loss': chance_outcome_prediction_loss,
