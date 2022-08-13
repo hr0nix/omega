@@ -230,7 +230,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
         timestamp_indices = jax.random.randint(timestamp_key, (minibatch_size,), 0, num_timestamps)
 
         # Note that we replace trajectory and timestamp dimensions by minibatch dimension here
-        return jax.tree_map(
+        return jax.tree_util.tree_map(
             lambda leaf: leaf[trajectory_indices, timestamp_indices, ...],
             trajectory_batch,
         )
@@ -260,10 +260,10 @@ class NethackPPOAgent(JaxTrainableAgentBase):
 
     def _preprocess_batch(self, trajectory_batch):
         advantage, value_targets = self._compute_advantage_and_value_targets(trajectory_batch)
-        next_state = jax.tree_map(lambda l: l[:, 1:, ...], trajectory_batch['current_state'])
+        next_state = jax.tree_util.tree_map(lambda l: l[:, 1:, ...], trajectory_batch['current_state'])
 
         # Get rid of states we don't have next states and GAE estimates for
-        trajectory_batch = jax.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
+        trajectory_batch = jax.tree_util.tree_map(lambda l: l[:, :-1, ...], trajectory_batch)
 
         # Add the values we just computed to the batch
         trajectory_batch = pytree.update(trajectory_batch, {
@@ -276,7 +276,7 @@ class NethackPPOAgent(JaxTrainableAgentBase):
     def _aggregate_train_stats(self, train_stats_per_minibatch, trajectory_batch):
         def aggregate_minibatch_stats(stats):
             return jnp.sum(stats) / self._config['num_minibatches_per_train_step']
-        train_stats_minibatch_avg = jax.tree_map(f=aggregate_minibatch_stats, tree=train_stats_per_minibatch)
+        train_stats_minibatch_avg = jax.tree_util.tree_map(f=aggregate_minibatch_stats, tree=train_stats_per_minibatch)
         batch_stats = {
             'state_value': jnp.mean(trajectory_batch['act_metadata']['state_values']),
             'advantage': jnp.mean(trajectory_batch['advantage']),

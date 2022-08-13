@@ -240,9 +240,9 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             latent_afterstate, latent_afterstate_with_chance_outcome, deterministic=deterministic)
         next_latent_state = self._maybe_normalize_state(next_latent_state)
 
-        log_reward_probs = self._reward_predictor(
+        reward_logits = self._reward_predictor(
             latent_afterstate_with_chance_outcome, deterministic=deterministic)
-        log_reward_probs = jax.nn.log_softmax(log_reward_probs, axis=-1)
+        log_reward_probs = jax.nn.log_softmax(reward_logits, axis=-1)
 
         chex.assert_rank([next_latent_state, log_reward_probs], [3, 2])
         return (
@@ -266,8 +266,8 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         all_action_embeddings = pytree.expand_dims(all_action_embeddings, axis=0)
         log_action_probs = self._policy_network(all_action_embeddings, latent_state, deterministic=deterministic)
 
-        log_value_probs = self._value_predictor(latent_state, deterministic=deterministic)
-        log_value_probs = jax.nn.log_softmax(log_value_probs, axis=-1)
+        value_logits = self._value_predictor(latent_state, deterministic=deterministic)
+        log_value_probs = jax.nn.log_softmax(value_logits, axis=-1)
 
         chex.assert_rank([log_action_probs, log_value_probs], [2, 2])
         return (
@@ -293,8 +293,8 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         log_chance_outcome_probs = self._chance_outcome_predictor(
             all_chance_outcome_embeddings, latent_afterstate, deterministic=deterministic)
 
-        log_afterstate_value_probs = self._afterstate_value_predictor(latent_afterstate, deterministic=deterministic)
-        log_afterstate_value_probs = jax.nn.log_softmax(log_afterstate_value_probs, axis=-1)
+        afterstate_value_logits = self._afterstate_value_predictor(latent_afterstate, deterministic=deterministic)
+        log_afterstate_value_probs = jax.nn.log_softmax(afterstate_value_logits, axis=-1)
 
         chex.assert_rank([log_chance_outcome_probs, log_afterstate_value_probs], [2, 2])
         return (
