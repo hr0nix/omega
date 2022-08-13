@@ -14,7 +14,7 @@ This repo contains and implementation of an agent that can learn to maximise rew
   * MCTS runs on GPU and is pretty fast.
   * [Reanalyze](https://arxiv.org/abs/2104.06294) is supported.
   * Recurrent memory is supported.
-  * State consistency loss loosely inspired by [EfficientZero](https://arxiv.org/abs/2111.00210) is supported.
+  * State consistency loss inspired by [Improving Model-Based Reinforcement Learning with Internal State Representations through Self-Supervision](https://arxiv.org/abs/2102.05599) is supported.
   * Ideas from [Stochastic MuZero](https://openreview.net/forum?id=X6D9bAHhBQ1) are implemented, so the agent runs correctly in stochastic environments.
   * A search policy from [Monte-Carlo tree search as regularized policy optimization](https://arxiv.org/pdf/2007.12509.pdf) can be enabled to improve efficiency of MCTS, which can be very helpful when simulation budget is small or branching factor is very large.
 * Training and inference is implemented in [JAX](https://github.com/google/jax), with the help of [rlax](https://github.com/deepmind/rlax) and [optax](https://github.com/deepmind/optax)
