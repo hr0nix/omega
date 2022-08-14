@@ -11,4 +11,5 @@ def entropy(logits):
 
     log_probs = jax.nn.log_softmax(logits)
     probs = jnp.exp(log_probs)
-    return -jnp.mean(jnp.where(probs > 0, probs * log_probs, jnp.zeros_like(probs)))
+    non_negative_probs = jnp.maximum(probs, jnp.finfo(probs.dtype).eps)  # to avoid -inf times zero
+    return -jnp.sum(jnp.where(probs > 0, non_negative_probs * log_probs, jnp.zeros_like(probs)))
