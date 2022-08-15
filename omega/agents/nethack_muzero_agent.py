@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import jax.random
 import jax.tree_util
 import jax.experimental.host_callback
-import optax
+import jax.experimental.checkify as checkify
 import rlax
 
 from ..math.probability import entropy, cross_entropy
@@ -251,7 +251,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     @checkify_method
     def _get_current_batch_stats_jit(self, trajectory_batch):
         return {
-            'act_avg_mcts_policy_entropy': jnp.mean(entropy(trajectory_batch['act_metadata']['log_mcts_action_probs'])),
+            'act_avg_mcts_policy_entropy': jnp.mean(
+                entropy(logits=trajectory_batch['act_metadata']['log_mcts_action_probs'])
+            ),
             'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
             'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
         }
@@ -719,10 +721,11 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         latent_afterstates, chance_outcome_one_hot_targets, dynamics_key_batch)
 
                     # Compute prediction losses
-                    step_value_loss = cross_entropy(value_targets, state_value_log_probs)
-                    step_afterstate_value_loss = cross_entropy(afterstate_value_targets, afterstate_value_log_probs)
-                    step_reward_loss = cross_entropy(reward_targets, reward_log_probs)
-                    step_policy_loss = cross_entropy(policy_targets, policy_log_probs)
+                    step_value_loss = cross_entropy(labels=value_targets, logits=state_value_log_probs)
+                    step_afterstate_value_loss = cross_entropy(
+                        labels=afterstate_value_targets, logits=afterstate_value_log_probs)
+                    step_reward_loss = cross_entropy(labels=reward_targets, logits=reward_log_probs)
+                    step_policy_loss = cross_entropy(labels=policy_targets, logits=policy_log_probs)
 
                     # TODO: remove me, just for debug
                     afterstate_value_scalar = self._decode_value_or_reward(afterstate_value_log_probs)
@@ -767,6 +770,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                     # Monitor the magnitude of the states to detect divergence
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
+
+                    checkify.check(not jnp.isinf(value_loss), 'value loss is inf')
+                    checkify.check(not jnp.isinf(afterstate_value_loss), 'afterstate value loss is inf')
+                    checkify.check(not jnp.isinf(reward_loss), 'reward loss is inf')
+                    checkify.check(not jnp.isinf(policy_loss), 'policy loss is inf')
+                    checkify.check(not jnp.isinf(state_similarity_loss), 'state similarity loss is inf')
+                    checkify.check(not jnp.isinf(chance_outcome_prediction_loss), 'chance prediction loss is inf')
 
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
@@ -870,7 +880,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         })
         reanalyze_stats = {
             'reanalyze_avg_mcts_policy_entropy': jnp.mean(
-                jax.vmap(jax.vmap(entropy))(trajectory_batch['mcts_reanalyze']['log_action_probs'])
+                entropy(logits=trajectory_batch['mcts_reanalyze']['log_action_probs'])
             ),
             'reanalyze_avg_mcts_state_value': jnp.mean(trajectory_batch['mcts_reanalyze']['state_values']),
             'reanalyze_var_mcts_state_value': jnp.var(trajectory_batch['mcts_reanalyze']['state_values']),
