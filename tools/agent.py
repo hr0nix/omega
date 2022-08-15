@@ -6,6 +6,7 @@ import gym
 import minihack  # noqa
 import wandb
 import jax
+import jax.experimental.checkify as checkify
 
 from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
@@ -13,7 +14,7 @@ from omega.training.replay_buffer import create_from_config as create_replay_buf
 from omega.evaluation import EvaluationStats
 from omega.utils.profiling import enable_profiling
 from omega.utils.gym import NetHackRGBRendering, NetHackBLStatsFiltering
-from omega.utils.jax import disable_jit, checkify_all
+from omega.utils.jax import disable_jit, force_checkify_checks
 from omega.utils.wandb import get_wandb_id
 
 from absl import logging
@@ -111,15 +112,20 @@ def do_train_agent(args):
 
 def train_agent(args):
     with disable_jit(args.disable_jit):
-        with checkify_all(args.checkify_all):
+        checkify_checks = checkify.user_checks
+        if args.checkify_all:
+            logging.info('All checkify checks will be enabled')
+            # Do not enable nan_checks because distrax violates them.
+            # TODO: replace with checkify.all_checks after distrax is fixed,
+            # TODO: see https://github.com/deepmind/distrax/issues/187
+            checkify_checks |= checkify.index_checks | checkify.div_checks
+        with force_checkify_checks(checkify_checks):
             if args.log_profile:
                 logging.info('Profiling is enabled')
                 enable_profiling()
-
             if args.log_memory_transfer:
                 logging.info('Memory transfer logging is enabled')
                 jax.config.update('jax_transfer_guard', 'log')
-
             if args.log_compilation:
                 logging.info('JIT compilation logging is enabled')
                 jax.config.update('jax_log_compiles', True)

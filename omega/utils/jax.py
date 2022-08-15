@@ -7,7 +7,7 @@ from jax.experimental import checkify
 from contextlib import contextmanager
 
 
-_GLOBAL_CHECKIFY_ERRORS = None
+_FORCE_CHECKIFY_CHECKS = None
 
 
 @contextmanager
@@ -28,55 +28,49 @@ def disable_jit_if_no_gpu():
 
 
 @contextmanager
-def override_checkify_checks(errors):
-    global _GLOBAL_CHECKIFY_ERRORS
-    old_errors = _GLOBAL_CHECKIFY_ERRORS
-    _GLOBAL_CHECKIFY_ERRORS = errors
+def force_checkify_checks(errors):
+    global _FORCE_CHECKIFY_CHECKS
+    old_errors = _FORCE_CHECKIFY_CHECKS
+    _FORCE_CHECKIFY_CHECKS = errors
     yield
-    _GLOBAL_CHECKIFY_ERRORS = old_errors
+    _FORCE_CHECKIFY_CHECKS = old_errors
 
 
-@contextmanager
-def checkify_all(enabled=True):
-    if enabled:
-        logging.info('Force enabling all checkify checks')
-        # Do not enable nan_checks because distrax violates them.
-        # TODO: remove this line after distrax is fixed (see https://github.com/deepmind/distrax/issues/187)
-        all_checks = checkify.user_checks | checkify.index_checks | checkify.div_checks
-        with override_checkify_checks(all_checks):
-            yield
-    else:
-        yield
-
-
-def throws_on_checkify_error(func, checkify_errors=checkify.user_checks):
+def checkify_func(func, errors=None):
     """
-    Enable checkify checks for a function and throw if there were any errors.
+    Enable checkify checks for a function. If errors are not specified,
+    globally forced checks will be enabled. If no globally forced checks are set, only user checks will be enabled.
     """
-    checkify_errors = _GLOBAL_CHECKIFY_ERRORS or checkify_errors
-    checked_func = checkify.checkify(func, errors=checkify_errors)
-
-    def result_func(*args, **kwargs):
-        err, result = checked_func(*args, **kwargs)
-        checkify.check_error(err)
-        return result
-
-    return result_func
+    errors = errors or _FORCE_CHECKIFY_CHECKS or checkify.user_checks
+    return checkify.checkify(func, errors=errors)
 
 
-def method_throws_on_checkify_error(func, checkify_errors=checkify.user_checks):
+def checkify_method(func, errors=None):
     """
-    Enable checkify checks for a class method and throw if there were any errors.
-    TODO: remove this function after throws_on_checkify_error starts working for class methods,
+    Analogue of checkify_func, but for class methods.
+    TODO: remove this function after checkify_func starts working for class methods,
     TODO: see https://github.com/google/jax/issues/11904
     """
     def result_func(*args, **kwargs):
         self, *args_no_self = args
 
-        @partial(throws_on_checkify_error, checkify_errors=checkify_errors)
+        @partial(checkify_func, errors=errors)
         def inner_func_no_self(*inner_args, **inner_kwargs):
             return func(self, *inner_args, **inner_kwargs)
 
         return inner_func_no_self(*args_no_self, **kwargs)
+
+    return result_func
+
+
+def throws_on_checkify_error(func):
+    """
+    Throws if a checkified function returns an error. If used with jit, the order of transformations
+    should be throws_on_checkify_error(jit(checkify_func(f))).
+    """
+    def result_func(*args, **kwargs):
+        err, result = func(*args, **kwargs)
+        checkify.check_error(err)
+        return result
 
     return result_func

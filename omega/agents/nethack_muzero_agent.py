@@ -23,7 +23,7 @@ import rlax
 from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
 from ..utils.flax import merge_params
-from ..utils.jax import method_throws_on_checkify_error
+from ..utils.jax import throws_on_checkify_error, checkify_method
 from ..utils.profiling import timeit
 from ..utils.tensor import pad_zeros, pad_values, pad_one_hot, masked_mean
 from ..models.nethack_muzero import NethackPerceiverMuZeroModel
@@ -246,8 +246,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def _get_replay_buffer_checkpoint_filename_prefix(self):
         return f'replay_buffer.step_{self._current_train_step}'
 
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)
-    @method_throws_on_checkify_error
+    @checkify_method
     def _get_current_batch_stats_jit(self, trajectory_batch):
         return {
             'act_avg_mcts_policy_entropy': jnp.mean(entropy(trajectory_batch['act_metadata']['log_mcts_action_probs'])),
@@ -305,8 +306,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return self._update_memory_batch_jit(self._train_state, new_memory_state, actions, done)
 
     @timeit
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)
-    @method_throws_on_checkify_error
+    @checkify_method
     def _update_memory_batch_jit(self, train_state, new_memory_state, actions, done):
         initial_memory_state = train_state.initial_memory_state_fn(train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
@@ -432,8 +434,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             self._replay_buffer.update_priority(item.id, priorities[index])
 
     @timeit
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)
-    @method_throws_on_checkify_error
+    @checkify_method
     def _get_updated_memory_state_after_last_ts_batch_jit(self, trajectory_batch):
         # Make sure terminal states are taken into account when updating memory
         updated_memory_after_last_ts_batch = self.update_memory_batch(
@@ -445,8 +448,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return updated_memory_after_last_ts_batch['memory']
 
     @timeit
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)
-    @method_throws_on_checkify_error
+    @checkify_method
     def _update_initial_trajectory_memory_jit(self, memories_to_update, update_source_ids, update_source):
         def updater(memory_to_update, update_source_id):
             update = update_source[update_source_id]
@@ -599,8 +603,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return train_stats, per_trajectory_loss_details
 
     @timeit
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)
-    @method_throws_on_checkify_error
+    @checkify_method
     def _train_jit(self, train_state, training_batch, rng):
         """
         Updates the model parameters by training on the given training batch.
@@ -834,6 +839,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return training_batch, reanalyse_stats, trajectory_batch_items
 
     @timeit
+    @throws_on_checkify_error
     @partial(jax.jit, static_argnums=0)  # TODO: enable full checkify
     def _make_next_training_batch_jit(self, train_state, trajectory_batch, rng):
         """
@@ -841,8 +847,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         on the results of the analysis.
         """
         trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze(train_state, trajectory_batch, rng)
-        trajectory_batch_with_training_targets = self._prepare_training_targets(trajectory_batch_with_mcts_stats)
-        return trajectory_batch_with_training_targets, reanalyze_stats
+        # TODO: remove err-related stuff after checkify is enabled globally
+        err, trajectory_batch_with_training_targets = self._prepare_training_targets(trajectory_batch_with_mcts_stats)
+        return err, (trajectory_batch_with_training_targets, reanalyze_stats)
 
     def _reanalyze(self, train_state, trajectory_batch, rng):
         """
@@ -869,7 +876,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         reanalyze_stats = pytree.update(reanalyze_stats, pytree.mean(mcts_stats))
         return trajectory_batch, reanalyze_stats
 
-    @method_throws_on_checkify_error
+    @checkify_method
     def _prepare_training_targets(self, trajectory_batch):
         """
         Pre-computes training targets for all unroll steps and adds them to the training batch.

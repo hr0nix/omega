@@ -1,12 +1,9 @@
 import pytest
 
 import jax
-import jax.numpy as jnp
 from jax.experimental import checkify
 
-import distrax
-
-from omega.utils.jax import throws_on_checkify_error, method_throws_on_checkify_error
+from omega.utils.jax import throws_on_checkify_error, checkify_func, checkify_method
 
 
 def func_with_check(x):
@@ -20,8 +17,9 @@ class ClassWithCheck:
         return x
 
 
-def test_checkify():
-    checked_f = checkify.checkify(func_with_check)
+def test_checkify_func():
+    checked_f = checkify_func(func_with_check)
+
     err, val = checked_f(1)
     err.throw()
     assert val == 1
@@ -31,31 +29,10 @@ def test_checkify():
         err.throw()
 
 
-def test_check_error():
-    checked_f = checkify.checkify(func_with_check)
-
-    def throwing_f(x):
-        err, val = checked_f(x)
-        checkify.check_error(err)
-        return val
-
-    assert throwing_f(1) == 1
-    with pytest.raises(ValueError):
-        throwing_f(-1)
-
-
-def test_throws_on_checkify_error():
-    checked_f = throws_on_checkify_error(func_with_check)
-    assert checked_f(1) == 1
-
-    with pytest.raises(ValueError):
-        checked_f(-1)
-
-
-@pytest.mark.xfail(reason='https://github.com/google/jax/issues/11904', run=False)
-def test_checkify_on_class_method():
+def test_checkify_method():
     instance = ClassWithCheck()
-    checked_f = checkify.checkify(ClassWithCheck.method_with_check)
+    checked_f = checkify_method(ClassWithCheck.method_with_check)
+
     err, val = checked_f(instance, 1)
     err.throw()
     assert val == 1
@@ -65,64 +42,18 @@ def test_checkify_on_class_method():
         err.throw()
 
 
-def test_method_throws_on_checkify_error():
-    instance = ClassWithCheck()
-    checked_f = method_throws_on_checkify_error(ClassWithCheck.method_with_check)
-    assert checked_f(instance, 1) == 1
+def test_throws_on_checkify_error():
+    checked_f = throws_on_checkify_error(checkify_func(func_with_check))
+    assert checked_f(1) == 1
 
     with pytest.raises(ValueError):
-        checked_f(instance, -1)
+        checked_f(-1)
 
 
-def test_checkify_with_while():
-    def func_to_check_with_loop(n, v):
-        def while_condition(loop_state):
-            counter, _ = loop_state
-            return counter > 0
+def test_throws_on_checkify_error_with_jit():
+    checked_f = throws_on_checkify_error(jax.jit(checkify_func(func_with_check)))
+    assert checked_f(1) == 1
 
-        def loop_body(loop_state):
-            counter, value = loop_state
-            checkify.check(value > 0, 'value must be positive')
-            return counter - 1, value - 1
-
-        _, result = jax.lax.while_loop(while_condition, loop_body, (n, v))
-        return result
-
-    checked_f = throws_on_checkify_error(func_to_check_with_loop)
-
-    assert checked_f(2, 2) == 0
     with pytest.raises(ValueError):
-        checked_f(2, 1)
-
-
-@pytest.mark.xfail(reason='https://github.com/google/jax/issues/11905', run=False)
-def test_checkify_with_batched_while():
-    def func_to_check_with_loop(n, v):
-        def while_condition(loop_state):
-            counter, _ = loop_state
-            return counter > 0
-
-        def loop_body(loop_state):
-            counter, value = loop_state
-            checkify.check(value > 0, 'value must be positive')
-            return counter - 1, value - 1
-
-        _, result = jax.lax.while_loop(while_condition, loop_body, (n, v))
-        return result
-
-    batched_func = jax.vmap(func_to_check_with_loop)
-    checked_f = checkify.checkify(batched_func)
-
-    err, val = checked_f(jnp.asarray([1, 2, 3]), jnp.asarray([5, 2, 4]))
-    err.throw()
-    assert jnp.all(val == jnp.asarray([4, 0, 1]))
-
-
-@pytest.mark.xfail(reason='https://github.com/deepmind/distrax/issues/187', run=False)
-def test_distrax_kl_none():
-    def func_to_check(logits, labels):
-        return distrax.Categorical(probs=labels).cross_entropy(distrax.Categorical(logits=logits))
-    checked_func = checkify.checkify(func_to_check, errors=checkify.nan_checks)
-    err, val = checked_func(logits=jnp.log(jnp.asarray([0.5, 0.5])), labels=jnp.asarray([1.0, 0.0]))
-    err.throw()
+        checked_f(-1)
 
