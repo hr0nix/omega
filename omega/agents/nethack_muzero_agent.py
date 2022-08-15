@@ -760,8 +760,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         rlax.l2_loss(current_latent_states, state_targets), axis=(-2, -1))
                     # We don't have targets at the end of a trajectory
                     # We also don't have next state targets for terminal states or anything after
-                    state_similarity_loss_mask = next_state_valid_mask * (1.0 - next_state_is_terminal_or_after)
-                    state_similarity_loss += masked_mean(step_state_similarity_loss, state_similarity_loss_mask)
+                    state_similarity_loss_mask = jnp.logical_and(
+                        next_state_valid_mask, jnp.logical_not(next_state_is_terminal_or_after))
+                    state_similarity_loss += masked_mean(
+                        step_state_similarity_loss, state_similarity_loss_mask, allow_zero_mask=True)
 
                     # Monitor the magnitude of the states to detect divergence
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
