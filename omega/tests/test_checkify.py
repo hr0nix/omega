@@ -4,6 +4,8 @@ import jax
 import jax.numpy as jnp
 from jax.experimental import checkify
 
+import distrax
+
 from omega.utils.jax import throws_on_checkify_error, method_throws_on_checkify_error
 
 
@@ -114,3 +116,13 @@ def test_checkify_with_batched_while():
     err, val = checked_f(jnp.asarray([1, 2, 3]), jnp.asarray([5, 2, 4]))
     err.throw()
     assert jnp.all(val == jnp.asarray([4, 0, 1]))
+
+
+@pytest.mark.xfail(reason='https://github.com/deepmind/distrax/issues/187', run=False)
+def test_distrax_kl_none():
+    def func_to_check(logits, labels):
+        return distrax.Categorical(probs=labels).cross_entropy(distrax.Categorical(logits=logits))
+    checked_func = checkify.checkify(func_to_check, errors=checkify.nan_checks)
+    err, val = checked_func(logits=jnp.log(jnp.asarray([0.5, 0.5])), labels=jnp.asarray([1.0, 0.0]))
+    err.throw()
+

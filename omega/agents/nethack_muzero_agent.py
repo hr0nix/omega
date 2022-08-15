@@ -20,7 +20,7 @@ import jax.experimental.host_callback
 import optax
 import rlax
 
-from ..math import entropy
+from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
 from ..utils.flax import merge_params
 from ..utils.jax import method_throws_on_checkify_error
@@ -250,9 +250,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     @method_throws_on_checkify_error
     def _get_current_batch_stats_jit(self, trajectory_batch):
         return {
-            'act_avg_mcts_policy_entropy': jnp.mean(
-                jax.vmap(jax.vmap(entropy))(trajectory_batch['act_metadata']['log_mcts_action_probs'])
-            ),
+            'act_avg_mcts_policy_entropy': jnp.mean(entropy(trajectory_batch['act_metadata']['log_mcts_action_probs'])),
             'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
             'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
         }
@@ -716,11 +714,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         latent_afterstates, chance_outcome_one_hot_targets, dynamics_key_batch)
 
                     # Compute prediction losses
-                    step_value_loss = jax.vmap(rlax.categorical_cross_entropy)(value_targets, state_value_log_probs)
-                    step_afterstate_value_loss = jax.vmap(rlax.categorical_cross_entropy)(
-                        afterstate_value_targets, afterstate_value_log_probs)
-                    step_reward_loss = jax.vmap(rlax.categorical_cross_entropy)(reward_targets, reward_log_probs)
-                    step_policy_loss = jax.vmap(rlax.categorical_cross_entropy)(policy_targets, policy_log_probs)
+                    step_value_loss = cross_entropy(value_targets, state_value_log_probs)
+                    step_afterstate_value_loss = cross_entropy(afterstate_value_targets, afterstate_value_log_probs)
+                    step_reward_loss = cross_entropy(reward_targets, reward_log_probs)
+                    step_policy_loss = cross_entropy(policy_targets, policy_log_probs)
 
                     # TODO: remove me, just for debug
                     afterstate_value_scalar = self._decode_value_or_reward(afterstate_value_log_probs)
@@ -745,7 +742,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     afterstate_value_loss += masked_mean(step_afterstate_value_loss, next_state_valid_mask)
 
                     # Compute chance outcome prediction loss
-                    step_chance_outcome_prediction_loss = jax.vmap(rlax.categorical_cross_entropy)(
+                    step_chance_outcome_prediction_loss = cross_entropy(
                         jax.lax.stop_gradient(chance_outcome_one_hot_targets), chance_outcome_log_probs)
                     chance_outcome_prediction_loss += masked_mean(
                         step_chance_outcome_prediction_loss, next_state_valid_mask)

@@ -40,7 +40,10 @@ def override_checkify_checks(errors):
 def checkify_all(enabled=True):
     if enabled:
         logging.info('Force enabling all checkify checks')
-        with override_checkify_checks(checkify.all_checks):
+        # Do not enable nan_checks because distrax violates them.
+        # TODO: remove this line after distrax is fixed (see https://github.com/deepmind/distrax/issues/187)
+        all_checks = checkify.user_checks | checkify.index_checks | checkify.div_checks
+        with override_checkify_checks(all_checks):
             yield
     else:
         yield
@@ -64,6 +67,8 @@ def throws_on_checkify_error(func, checkify_errors=checkify.user_checks):
 def method_throws_on_checkify_error(func, checkify_errors=checkify.user_checks):
     """
     Enable checkify checks for a class method and throw if there were any errors.
+    TODO: remove this function after throws_on_checkify_error starts working for class methods,
+    TODO: see https://github.com/google/jax/issues/11904
     """
     def result_func(*args, **kwargs):
         self, *args_no_self = args

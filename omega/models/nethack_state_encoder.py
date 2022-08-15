@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import nle.nethack
 
 from omega.neural import TransformerNet, CrossTransformerNet, DenseNet
-from omega.math import log_transform
 
 from .base import ItemEmbedder
 
@@ -20,7 +19,6 @@ class PerceiverNethackStateEncoder(nn.Module):
     num_memory_units: int = 128
     memory_dim: int = 64
     use_bl_stats: bool = True
-    bl_stats_log_transform: bool = False
     num_bl_stats_blocks: int = 2
     num_perceiver_blocks: int = 2
     num_perceiver_self_attention_subblocks: int = 2
@@ -156,12 +154,9 @@ class PerceiverNethackStateEncoder(nn.Module):
         memory = self._memory_embedder(batch_size)
 
         if self.use_bl_stats:
-            bl_stats = current_state_batch['blstats']
-            if self.bl_stats_log_transform:
-                bl_stats = log_transform(bl_stats)
-            bl_stats = self._bl_stats_network(bl_stats)
+            bl_stats_representation = self._bl_stats_network(current_state_batch['blstats'])
             # Add bl stats as an extra memory cell
-            memory = jnp.concatenate([memory, jnp.expand_dims(bl_stats, axis=1)], axis=1)
+            memory = jnp.concatenate([memory, jnp.expand_dims(bl_stats_representation, axis=1)], axis=1)
 
         # If a memory context is specified, update memory by attending to it.
         # This allows for context-dependent state encoding

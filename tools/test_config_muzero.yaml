@@ -42,7 +42,6 @@ agent_config:
       use_fixed_positional_embeddings: false
       use_bl_stats: true
       num_bl_stats_blocks: 1
-      bl_stats_log_transform: true
       glyph_crop_size: [5, 5]
     scalar_predictor_config:
       transformer_num_blocks: 1
