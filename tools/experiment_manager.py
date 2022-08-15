@@ -51,6 +51,8 @@ def run_experiment(args):
         subprocess_args.append('--log-compilation')
     if args.disable_jit:
         subprocess_args.append('--disable-jit')
+    if args.checkify_all:
+        subprocess_args.append('--checkify-all')
 
     subprocess.run(env=env, args=subprocess_args)
 
@@ -110,6 +112,7 @@ def parse_args():
     run_parser.add_argument('--log-compilation', required=False, action='store_true', default=False)
     run_parser.add_argument('--disable-jit', required=False, action='store_true', default=False)
     run_parser.add_argument('--disable-checkpoints', required=False, action='store_true', default=False)
+    run_parser.add_argument('--checkify-all', action='store_true', required=False, default=False)
     run_parser.set_defaults(func=run_experiment)
 
     cleanup_parser = subparsers.add_parser('cleanup', help='Cleanup an experiment dir')
