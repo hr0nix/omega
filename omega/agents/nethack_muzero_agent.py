@@ -772,12 +772,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Monitor the magnitude of the states to detect divergence
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
 
-                    checkify.check(not jnp.isinf(value_loss), 'value loss is inf')
-                    checkify.check(not jnp.isinf(afterstate_value_loss), 'afterstate value loss is inf')
-                    checkify.check(not jnp.isinf(reward_loss), 'reward loss is inf')
-                    checkify.check(not jnp.isinf(policy_loss), 'policy loss is inf')
-                    checkify.check(not jnp.isinf(state_similarity_loss), 'state similarity loss is inf')
-                    checkify.check(not jnp.isinf(chance_outcome_prediction_loss), 'chance prediction loss is inf')
+                    # TODO: might remove this after debugging
+                    checkify.check(jnp.logical_not(jnp.isinf(value_loss)), 'value loss is inf')
+                    checkify.check(jnp.logical_not(not jnp.isinf(afterstate_value_loss)), 'afterstate value loss is inf')
+                    checkify.check(jnp.logical_not(not jnp.isinf(reward_loss)), 'reward loss is inf')
+                    checkify.check(jnp.logical_not(not jnp.isinf(policy_loss)), 'policy loss is inf')
+                    checkify.check(jnp.logical_not(not jnp.isinf(state_similarity_loss)), 'state similarity loss is inf')
+                    checkify.check(jnp.logical_not(not jnp.isinf(chance_outcome_prediction_loss)), 'chance prediction loss is inf')
 
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
