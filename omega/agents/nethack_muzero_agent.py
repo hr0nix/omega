@@ -19,6 +19,7 @@ import jax.tree_util
 import jax.experimental.host_callback
 import jax.experimental.checkify as checkify
 import rlax
+import optax
 
 from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
