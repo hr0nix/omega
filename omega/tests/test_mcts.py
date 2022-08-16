@@ -32,7 +32,7 @@ class SimpleBandit:
     def num_outcomes(self):
         return 2
 
-    def prediction(self, state):
+    def prediction(self, state, rng):
         if state == self.initial_state:
             action_log_probs = np.log([0.5, 0.5])
             value = 0.5 * (0.3 * 1 + 0.7 * (-0.5)) + 0.5 * (0.6 * 0.5 + 0.4 * (-0.5))
@@ -43,7 +43,7 @@ class SimpleBandit:
             assert False, 'Unexpected state'
         return action_log_probs, np.asarray(value, dtype=np.int32)
 
-    def afterstate_prediction(self, afterstate):
+    def afterstate_prediction(self, afterstate, rng):
         if afterstate == 0:
             outcome_log_probs = np.log([0.3, 0.7])
             afterstate_value = 0.3 * 1 + 0.7 * (-0.5)
@@ -57,7 +57,7 @@ class SimpleBandit:
             assert False, 'Unexpected afterstate'
         return outcome_log_probs, np.asarray(afterstate_value, dtype=np.float32)
 
-    def dynamics(self, afterstate, outcome):
+    def dynamics(self, afterstate, outcome, rng):
         assert outcome.shape == (2,)
         outcome = np.argmax(outcome)
 
@@ -83,7 +83,7 @@ class SimpleBandit:
         next_state = 1
         return np.asarray(next_state, dtype=np.int32), np.asarray(reward, dtype=np.float32)
 
-    def afterstate_dynamics(self, state, action):
+    def afterstate_dynamics(self, state, action, rng):
         if action == 0:
             if state == self.initial_state:
                 afterstate = 0  # First arm
