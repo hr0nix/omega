@@ -34,6 +34,10 @@ def masked_mean(tensor, mask, axis=None, keepdims=False, allow_zero_mask=False):
     eps = jnp.finfo(jnp.float32).tiny if allow_zero_mask else 0.0
     normalizer = 1.0 / (jnp.sum(mask, axis=axis, keepdims=True, dtype=jnp.float32) + eps)
 
-    return jnp.sum(tensor * mask, axis=axis, keepdims=keepdims) * normalizer
+    result = jnp.sum(tensor * mask, axis=axis, keepdims=True) * normalizer
+    if not keepdims:
+        result = jnp.squeeze(result, axis=axis)
+
+    return result
 
 

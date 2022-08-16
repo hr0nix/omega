@@ -773,12 +773,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
 
                     # TODO: might remove this after debugging
-                    checkify.check(jnp.logical_not(jnp.isinf(value_loss)), 'value loss is inf')
-                    checkify.check(jnp.logical_not(not jnp.isinf(afterstate_value_loss)), 'afterstate value loss is inf')
-                    checkify.check(jnp.logical_not(not jnp.isinf(reward_loss)), 'reward loss is inf')
-                    checkify.check(jnp.logical_not(not jnp.isinf(policy_loss)), 'policy loss is inf')
-                    checkify.check(jnp.logical_not(not jnp.isinf(state_similarity_loss)), 'state similarity loss is inf')
-                    checkify.check(jnp.logical_not(not jnp.isinf(chance_outcome_prediction_loss)), 'chance prediction loss is inf')
+                    checkify.check(value_loss != jnp.inf, 'value loss is inf')
+                    checkify.check(afterstate_value_loss != jnp.inf, 'afterstate value loss is inf')
+                    checkify.check(reward_loss != jnp.inf, 'reward loss is inf')
+                    checkify.check(policy_loss != jnp.inf, 'policy loss is inf')
+                    checkify.check(state_similarity_loss != jnp.inf, 'state similarity loss is inf')
+                    checkify.check(chance_outcome_prediction_loss != jnp.inf, 'chance prediction loss is inf')
 
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
