@@ -738,7 +738,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     step_afterstate_value_l2_loss = rlax.l2_loss(afterstate_value_scalar, afterstate_target_scalar)
                     step_value_l2_loss = rlax.l2_loss(value_scalar, value_target_scalar)
                     step_reward_l2_loss = rlax.l2_loss(reward_scalar, reward_target_scalar)
-                    afterstate_value_l2_loss += masked_mean(step_afterstate_value_l2_loss, current_state_valid_mask)
+                    afterstate_value_l2_loss += masked_mean(step_afterstate_value_l2_loss, next_state_valid_mask)
                     value_l2_loss += masked_mean(step_value_l2_loss, current_state_valid_mask)
                     reward_l2_loss += masked_mean(step_reward_l2_loss, current_state_valid_mask)
 
