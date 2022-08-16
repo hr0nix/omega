@@ -115,10 +115,7 @@ def train_agent(args):
         checkify_checks = checkify.user_checks
         if args.checkify_all:
             logging.info('All checkify checks will be enabled')
-            # Do not enable nan_checks because distrax violates them.
-            # TODO: replace with checkify.all_checks after distrax is fixed,
-            # TODO: see https://github.com/deepmind/distrax/issues/187
-            checkify_checks |= checkify.index_checks | checkify.div_checks
+            checkify_checks = checkify.all_checks
         with force_checkify_checks(checkify_checks):
             if args.log_profile:
                 logging.info('Profiling is enabled')
