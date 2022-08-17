@@ -500,17 +500,20 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def prediction_fn(state, rng):
             log_action_probs, log_value_probs = train_state.prediction_fn(
                 train_state.params, state, deterministic=deterministic, rngs={'dropout': rng})
-            return log_action_probs, self._value_reward_transform_pair.apply_inv(log_value_probs)
+            value_probs = jnp.exp(log_value_probs)
+            return log_action_probs, self._value_reward_transform_pair.apply_inv(value_probs)
 
         def afterstate_prediction_fn(afterstate, rng):
             log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
                 train_state.params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
-            return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(log_afterstate_value_probs)
+            afterstate_value_probs = jnp.exp(log_afterstate_value_probs)
+            return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(afterstate_value_probs)
 
         def dynamics_fn(afterstate, chance_outcome, rng):
-            next_state, reward_log_probs = train_state.dynamics_fn(
+            next_state, log_reward_probs = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome, deterministic=deterministic, rngs={'dropout': rng})
-            return next_state, self._value_reward_transform_pair.apply_inv(reward_log_probs)
+            reward_probs = jnp.exp(log_reward_probs)
+            return next_state, self._value_reward_transform_pair.apply_inv(reward_probs)
 
         def afterstate_dynamics_fn(prev_state, action, rng):
             afterstate = train_state.afterstate_dynamics_fn(
@@ -706,14 +709,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     step_policy_loss = cross_entropy(labels=policy_targets, logits=policy_log_probs)
 
                     # TODO: remove me, just for debug
-                    afterstate_value_scalar = self._value_reward_transform_pair.apply_inv(afterstate_value_log_probs)
-                    value_scalar = self._value_reward_transform_pair.apply_inv(state_value_log_probs)
-                    reward_scalar = self._value_reward_transform_pair.apply_inv(reward_log_probs)
+                    afterstate_value_probs = jnp.exp(afterstate_value_log_probs)
+                    state_value_probs = jnp.exp(state_value_log_probs)
+                    reward_probs = jnp.exp(reward_log_probs)
+                    afterstate_value_scalar = self._value_reward_transform_pair.apply_inv(afterstate_value_probs)
+                    state_value_scalar = self._value_reward_transform_pair.apply_inv(state_value_probs)
+                    reward_scalar = self._value_reward_transform_pair.apply_inv(reward_probs)
                     afterstate_target_scalar = trajectory['training_targets']['afterstate_value_scalar'][:, unroll_step]
                     state_value_target_scalar = trajectory['training_targets']['state_value_scalar'][:, unroll_step]
                     reward_target_scalar = trajectory['training_targets']['reward_scalar'][:, unroll_step]
                     step_afterstate_value_l2_loss = rlax.l2_loss(afterstate_value_scalar, afterstate_target_scalar)
-                    step_state_value_l2_loss = rlax.l2_loss(value_scalar, state_value_target_scalar)
+                    step_state_value_l2_loss = rlax.l2_loss(state_value_scalar, state_value_target_scalar)
                     step_reward_l2_loss = rlax.l2_loss(reward_scalar, reward_target_scalar)
                     afterstate_value_l2_loss += masked_mean(step_afterstate_value_l2_loss, next_state_valid_mask)
                     state_value_l2_loss += masked_mean(step_state_value_l2_loss, current_state_valid_mask)
@@ -988,16 +994,20 @@ def compute_one_hot_targets(trajectory_targets, value_reward_transform):
 
 
 def make_value_reward_transform_pair(min_value, max_value, num_bins):
-    def apply(x):
-        return rlax.transform_to_2hot(x, min_value, max_value, num_bins)
+    def apply(value):
+        probs = rlax.transform_to_2hot(value, min_value, max_value, num_bins)
+        chex.assert_rank(probs, len(value.shape) + 1)
+        return probs
 
-    def apply_inv(x):
-        result = rlax.transform_from_2hot(x, min_value, max_value, num_bins)
-        if len(x.shape) == 1:
+    def apply_inv(probs):
+        chex.assert_axis_dimension(probs, axis=-1, expected=num_bins)
+        result = rlax.transform_from_2hot(probs, min_value, max_value, num_bins)
+        if len(probs.shape) == 1:
             # Work around a weird behavior of rlax.transform_from_2hot which doesn't return scalar outputs
             chex.assert_rank(result, 1)
             chex.assert_axis_dimension(result, 0, 1)
             result = jnp.squeeze(result, axis=-1)
+        chex.assert_rank(result, len(probs.shape) - 1)
         return result
 
     return rlax.TxPair(apply=apply, apply_inv=apply_inv)
