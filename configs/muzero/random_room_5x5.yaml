@@ -39,7 +39,6 @@ agent_config:
   state_similarity_loss_stop_gradient: false
   chance_outcome_commitment_loss_weight: 100.0
   chance_outcome_prediction_loss_weight: 1.0
-  reward_values: [-0.01, 0.0, 1.0]
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: false
