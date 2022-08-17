@@ -93,6 +93,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._replay_buffer = replay_buffer
         self._current_train_step = 0
 
+        self._value_reward_transform_pair = make_value_reward_transform_pair(
+            min_value=self._config['value_reward_min_max'][0],
+            max_value=self._config['value_reward_min_max'][1],
+            num_bins=self._config['value_reward_bins'],
+        )
+
         self._build_model(model_factory)
 
     def _init_model_params(self):
@@ -328,36 +334,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': done,
         }
 
-    def _encode_value_or_reward(self, value_or_reward):
-        """
-        Converts a value or a reward from a scalar to a two-hot representation.
-        """
-        return rlax.transform_to_2hot(
-            value_or_reward,
-            min_value=self._config['value_reward_min_max'][0],
-            max_value=self._config['value_reward_min_max'][1],
-            num_bins=self._config['value_reward_bins'],
-        )
-
-    def _decode_value_or_reward(self, value_or_reward_log_probs):
-        """
-        Converts a value or a reward from a two-hot representation back to a scalar.
-        """
-        chex.assert_axis_dimension(value_or_reward_log_probs, -1, self._config['value_reward_bins'])
-
-        result = rlax.transform_from_2hot(
-            jax.nn.softmax(value_or_reward_log_probs),
-            min_value=self._config['value_reward_min_max'][0],
-            max_value=self._config['value_reward_min_max'][1],
-            num_bins=self._config['value_reward_bins'],
-        )
-        if len(value_or_reward_log_probs.shape) == 1:
-            # Work around a weird behavior of rlax.transform_from_2hot which doesn't return scalar outputs
-            chex.assert_rank(result, 1)
-            chex.assert_axis_dimension(result, 0, 1)
-            result = jnp.squeeze(result, axis=-1)
-        return result
-
     @staticmethod
     def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
         """
@@ -524,17 +500,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def prediction_fn(state, rng):
             log_action_probs, log_value_probs = train_state.prediction_fn(
                 train_state.params, state, deterministic=deterministic, rngs={'dropout': rng})
-            return log_action_probs, self._decode_value_or_reward(log_value_probs)
+            return log_action_probs, self._value_reward_transform_pair.apply_inv(log_value_probs)
 
         def afterstate_prediction_fn(afterstate, rng):
             log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
                 train_state.params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
-            return log_chance_outcome_probs, self._decode_value_or_reward(log_afterstate_value_probs)
+            return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(log_afterstate_value_probs)
 
         def dynamics_fn(afterstate, chance_outcome, rng):
             next_state, reward_log_probs = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome, deterministic=deterministic, rngs={'dropout': rng})
-            return next_state, self._decode_value_or_reward(reward_log_probs)
+            return next_state, self._value_reward_transform_pair.apply_inv(reward_log_probs)
 
         def afterstate_dynamics_fn(prev_state, action, rng):
             afterstate = train_state.afterstate_dynamics_fn(
@@ -647,9 +623,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 # TODO: remove me
                 afterstate_value_l2_loss = 0.0
-                value_l2_loss = 0.0
+                state_value_l2_loss = 0.0
                 reward_l2_loss = 0.0
-                value_loss = 0.0
+                # end of TODO
+                state_value_loss = 0.0
                 afterstate_value_loss = 0.0
                 reward_loss = 0.0
                 policy_loss = 0.0
@@ -661,13 +638,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     current_state_valid_mask = jnp.arange(0, num_timestamps) < num_timestamps - unroll_step
                     next_state_valid_mask = jnp.arange(num_timestamps) < num_timestamps - unroll_step - 1
 
-                    actions = trajectory['training_targets']['actions'][:, unroll_step]
+                    actions = trajectory['training_targets']['action'][:, unroll_step]
                     next_state_is_terminal_or_after = trajectory['training_targets']['next_state_is_terminal_or_after'][:, unroll_step]
                     next_state_is_terminal_or_after_extra_dim = jnp.expand_dims(
                         next_state_is_terminal_or_after, axis=1)
-                    value_targets = trajectory['training_targets']['value_discrete'][:, unroll_step]
+                    state_value_targets = trajectory['training_targets']['state_value_discrete'][:, unroll_step]
                     afterstate_value_targets = trajectory['training_targets']['afterstate_value_discrete'][:, unroll_step]
-                    reward_targets = trajectory['training_targets']['rewards_discrete'][:, unroll_step]
+                    reward_targets = trajectory['training_targets']['reward_discrete'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
                     if self._config['state_similarity_loss_stop_gradient']:
@@ -722,30 +699,30 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         latent_afterstates, chance_outcome_one_hot_targets, dynamics_key_batch)
 
                     # Compute prediction losses
-                    step_value_loss = cross_entropy(labels=value_targets, logits=state_value_log_probs)
+                    step_state_value_loss = cross_entropy(labels=state_value_targets, logits=state_value_log_probs)
                     step_afterstate_value_loss = cross_entropy(
                         labels=afterstate_value_targets, logits=afterstate_value_log_probs)
                     step_reward_loss = cross_entropy(labels=reward_targets, logits=reward_log_probs)
                     step_policy_loss = cross_entropy(labels=policy_targets, logits=policy_log_probs)
 
                     # TODO: remove me, just for debug
-                    afterstate_value_scalar = self._decode_value_or_reward(afterstate_value_log_probs)
-                    value_scalar = self._decode_value_or_reward(state_value_log_probs)
-                    reward_scalar = self._decode_value_or_reward(reward_log_probs)
+                    afterstate_value_scalar = self._value_reward_transform_pair.apply_inv(afterstate_value_log_probs)
+                    value_scalar = self._value_reward_transform_pair.apply_inv(state_value_log_probs)
+                    reward_scalar = self._value_reward_transform_pair.apply_inv(reward_log_probs)
                     afterstate_target_scalar = trajectory['training_targets']['afterstate_value_scalar'][:, unroll_step]
-                    value_target_scalar = trajectory['training_targets']['value_scalar'][:, unroll_step]
-                    reward_target_scalar = trajectory['training_targets']['rewards_scalar'][:, unroll_step]
+                    state_value_target_scalar = trajectory['training_targets']['state_value_scalar'][:, unroll_step]
+                    reward_target_scalar = trajectory['training_targets']['reward_scalar'][:, unroll_step]
                     step_afterstate_value_l2_loss = rlax.l2_loss(afterstate_value_scalar, afterstate_target_scalar)
-                    step_value_l2_loss = rlax.l2_loss(value_scalar, value_target_scalar)
+                    step_state_value_l2_loss = rlax.l2_loss(value_scalar, state_value_target_scalar)
                     step_reward_l2_loss = rlax.l2_loss(reward_scalar, reward_target_scalar)
                     afterstate_value_l2_loss += masked_mean(step_afterstate_value_l2_loss, next_state_valid_mask)
-                    value_l2_loss += masked_mean(step_value_l2_loss, current_state_valid_mask)
+                    state_value_l2_loss += masked_mean(step_state_value_l2_loss, current_state_valid_mask)
                     reward_l2_loss += masked_mean(step_reward_l2_loss, current_state_valid_mask)
 
                     # Mask out every timestamp for which we don't have a valid target
                     # Also apply loss scaling to make loss timestamp-independent
 
-                    value_loss += masked_mean(step_value_loss, current_state_valid_mask)
+                    state_value_loss += masked_mean(step_state_value_loss, current_state_valid_mask)
                     reward_loss += masked_mean(step_reward_loss, current_state_valid_mask)
                     policy_loss += masked_mean(step_policy_loss, current_state_valid_mask)
                     afterstate_value_loss += masked_mean(step_afterstate_value_loss, next_state_valid_mask)
@@ -773,7 +750,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
 
                     # TODO: might remove this after debugging
-                    checkify.check(value_loss != jnp.inf, 'value loss is inf')
+                    checkify.check(state_value_loss != jnp.inf, 'value loss is inf')
                     checkify.check(afterstate_value_loss != jnp.inf, 'afterstate value loss is inf')
                     checkify.check(reward_loss != jnp.inf, 'reward loss is inf')
                     checkify.check(policy_loss != jnp.inf, 'policy loss is inf')
@@ -782,7 +759,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
-                value_loss /= num_unroll_steps
+                state_value_loss /= num_unroll_steps
                 reward_loss /= num_unroll_steps
                 policy_loss /= num_unroll_steps
                 chance_outcome_prediction_loss /= num_unroll_steps
@@ -790,11 +767,12 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 state_avg_sqr /= num_unroll_steps
                 # TODO: remove me
                 afterstate_value_l2_loss /= num_unroll_steps
-                value_l2_loss /= num_unroll_steps
+                state_value_l2_loss /= num_unroll_steps
                 reward_l2_loss /= num_unroll_steps
+                # end of TODO
                 loss = (
                     self._config['afterstate_value_loss_weight'] * afterstate_value_loss +
-                    self._config['value_loss_weight'] * value_loss +
+                    self._config['value_loss_weight'] * state_value_loss +
                     self._config['reward_loss_weight'] * reward_loss +
                     self._config['policy_loss_weight'] * policy_loss +
                     self._config['chance_outcome_prediction_loss_weight'] * chance_outcome_prediction_loss +
@@ -804,12 +782,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 return loss, {
                     'afterstate_value_loss': afterstate_value_loss,
-                    'value_loss': value_loss,
+                    'value_loss': state_value_loss,
                     'reward_loss': reward_loss,
                     # TODO: remove me
                     'afterstate_value_l2_loss': afterstate_value_l2_loss,
-                    'value_l2_loss': value_l2_loss,
+                    'value_l2_loss': state_value_l2_loss,
                     'reward_l2_loss': reward_l2_loss,
+                    # end of TODO
                     'policy_loss': policy_loss,
                     'chance_outcome_prediction_loss': chance_outcome_prediction_loss,
                     'chance_outcome_commitment_loss': chance_outcome_commitment_loss,
@@ -896,113 +875,129 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         Pre-computes training targets for all unroll steps and adds them to the training batch.
         """
         def make_training_trajectory(trajectory):
-            num_timestamps = pytree.get_axis_dim(trajectory, axis=0)
-            num_unroll_steps = self._config['num_train_unroll_steps']
-            num_actions = self.action_space.n
-
-            # The original MuZero paper used n-step returns, but we'll go completely off-policy
-            # by predicting the MCTS policy value.
-            # MuZero Reanalyze paper has shown that it works, but a bit worse for some reason. Works fine for us.
-            state_values = trajectory['mcts_reanalyze']['state_values']
-
-            # Allocate memory for training targets.
-            # We will pre-compute training targets for every unroll step where possible.
-            trajectory = pytree.update(trajectory, {
-                'training_targets': {
-                    'value_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
-                    'afterstate_value_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
-                    'rewards_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
-                    'policy': jnp.zeros((num_timestamps, num_unroll_steps, num_actions), dtype=jnp.float32),
-                    'actions': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.int32),
-                    'next_state_is_terminal_or_after': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
-                }
+            targets = compute_training_targets(
+                trajectory, self._config['num_train_unroll_steps'], self._config['discount_factor'])
+            targets = pytree.update(targets, compute_one_hot_targets(targets, self._value_reward_transform_pair.apply))
+            return pytree.update(trajectory, {
+                'training_targets': targets,
             })
-
-            # Padding will make computations at the end of a trajectory more convenient
-            assert num_timestamps >= num_unroll_steps, \
-                'There will be unroll steps with no ground truth at all otherwise'
-            padded_target_sources = {
-                # We need an extra padded value here to compute afterstate values
-                'state_values': pad_zeros(state_values, size=num_unroll_steps, axis=-1),
-                'actions': pad_zeros(trajectory['actions'], size=num_unroll_steps - 1, axis=-1),
-                'done': pad_zeros(trajectory['done'], size=num_unroll_steps - 1, axis=-1),
-                'rewards': pad_zeros(trajectory['rewards'], size=num_unroll_steps - 1, axis=-1),
-                # Pad action probs with uniform policy
-                'log_mcts_action_probs': pad_values(
-                    trajectory['mcts_reanalyze']['log_action_probs'],
-                    size=num_unroll_steps - 1, value=-jnp.log(self.action_space.n), axis=-2),
-            }
-
-            def unroll_loop_body(unroll_step, loop_state):
-                trajectory, state_is_terminal_or_after = loop_state
-
-                state_is_terminal_or_after_extra_dim = jnp.expand_dims(state_is_terminal_or_after, axis=-1)
-
-                actions = jax.lax.dynamic_slice_in_dim(
-                    padded_target_sources['actions'], unroll_step, num_timestamps, axis=0)
-                value_targets_scalar = jax.lax.dynamic_slice_in_dim(
-                    padded_target_sources['state_values'], unroll_step, num_timestamps, axis=0)
-                reward_targets_scalar = jax.lax.dynamic_slice_in_dim(
-                    padded_target_sources['rewards'], unroll_step, num_timestamps, axis=0)
-                # Value and reward targets are zero after we've reached a terminal state
-                value_targets_scalar = jnp.where(state_is_terminal_or_after, 0.0, value_targets_scalar)
-                reward_targets_scalar = jnp.where(state_is_terminal_or_after, 0.0, reward_targets_scalar)
-
-                log_mcts_action_probs_slice = jax.lax.dynamic_slice_in_dim(
-                    padded_target_sources['log_mcts_action_probs'], unroll_step, num_timestamps, axis=0)
-                mcts_action_probs_slice = jnp.exp(log_mcts_action_probs_slice)
-                # Policy target is uniform after we've reached an absorbing state
-                policy_target_probs = jnp.where(
-                    state_is_terminal_or_after_extra_dim,
-                    jnp.full_like(mcts_action_probs_slice, 1.0 / self.action_space.n),
-                    mcts_action_probs_slice,
-                )
-
-                done = jax.lax.dynamic_slice_in_dim(padded_target_sources['done'], unroll_step, num_timestamps, axis=0)
-                next_state_is_terminal_or_after = jnp.logical_or(state_is_terminal_or_after, done)
-
-                next_state_value_targets = jax.lax.dynamic_slice_in_dim(
-                    padded_target_sources['state_values'], unroll_step + 1, num_timestamps, axis=0)
-                afterstate_value_targets_scalar = (
-                    reward_targets_scalar +
-                    # We take square root here for consistency with interpretation of discount factor in MCTS.
-                    math.sqrt(self._config['discount_factor']) * jnp.where(
-                        next_state_is_terminal_or_after, 0.0, next_state_value_targets)
-                )
-
-                # Update the current slice of the training targets with the computed values
-                trajectory['training_targets'] = {
-                    'value_scalar': trajectory['training_targets']['value_scalar'].at[:, unroll_step].set(
-                        value_targets_scalar),
-                    'afterstate_value_scalar': trajectory['training_targets']['afterstate_value_scalar'].at[:, unroll_step].set(
-                        afterstate_value_targets_scalar),
-                    'rewards_scalar': trajectory['training_targets']['rewards_scalar'].at[:, unroll_step].set(
-                        reward_targets_scalar),
-                    'policy': trajectory['training_targets']['policy'].at[:, unroll_step].set(policy_target_probs),
-                    'actions': trajectory['training_targets']['actions'].at[:, unroll_step].set(
-                        actions),
-                    'next_state_is_terminal_or_after':
-                        trajectory['training_targets']['next_state_is_terminal_or_after'].at[:, unroll_step].set(
-                            next_state_is_terminal_or_after),
-                }
-
-                return trajectory, next_state_is_terminal_or_after
-
-            trajectory_with_targets, _ = jax.lax.fori_loop(
-                lower=0, upper=num_unroll_steps, body_fun=unroll_loop_body,
-                init_val=(trajectory, jnp.zeros_like(trajectory['done']))
-            )
-
-            # Convert values and rewards to discrete representation
-            trajectory_with_targets['training_targets'] = pytree.update(trajectory_with_targets['training_targets'], {
-                'rewards_discrete': self._encode_value_or_reward(
-                    trajectory_with_targets['training_targets']['rewards_scalar']),
-                'value_discrete': self._encode_value_or_reward(
-                    trajectory_with_targets['training_targets']['value_scalar']),
-                'afterstate_value_discrete': self._encode_value_or_reward(
-                    trajectory_with_targets['training_targets']['afterstate_value_scalar']),
-            })
-
-            return trajectory_with_targets
 
         return jax.vmap(make_training_trajectory)(trajectory_batch)
+
+
+def compute_training_targets(trajectory, num_unroll_steps, discount_factor):
+    trajectory_elements = [
+        trajectory['mcts_reanalyze']['state_values'],
+        trajectory['mcts_reanalyze']['log_action_probs'],
+        trajectory['actions'],
+        trajectory['rewards'],
+        trajectory['done'],
+    ]
+    chex.assert_equal_shape_prefix(trajectory_elements, 1)
+    chex.assert_type(trajectory_elements, [jnp.float32, jnp.float32, jnp.int32, jnp.float32, jnp.bool_])
+    chex.assert_rank(trajectory_elements, [1, 2, 1, 1, 1])
+
+    num_timestamps, num_actions = trajectory['mcts_reanalyze']['log_action_probs'].shape
+
+    # Allocate memory for training targets. We will pre-compute training targets for every unroll step
+    # except those that cannot be computed outside the training loop.
+    trajectory_targets = {
+        'state_value_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
+        'afterstate_value_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
+        'reward_scalar': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.float32),
+        'policy': jnp.zeros((num_timestamps, num_unroll_steps, num_actions), dtype=jnp.float32),
+        'action': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.int32),
+        'next_state_is_terminal_or_after': jnp.zeros((num_timestamps, num_unroll_steps), dtype=jnp.bool_),
+    }
+
+    # Padding will make computations at the end of a trajectory more convenient
+    assert num_timestamps >= num_unroll_steps, \
+        'There will be unroll steps with no ground truth at all otherwise'
+    # The original MuZero paper used n-step returns, but we'll go completely off-policy
+    # by predicting the MCTS policy value.
+    # MuZero Reanalyze paper has shown that it works, but a bit worse for some reason. Works fine for us.
+    # We pad for num_unroll_steps here because we need an extra padded value to compute afterstate values.
+    value_target_source = pad_zeros(trajectory['mcts_reanalyze']['state_values'], size=num_unroll_steps, axis=-1)
+    actions_target_source = pad_zeros(trajectory['actions'], size=num_unroll_steps - 1, axis=-1)
+    done_target_source = pad_zeros(trajectory['done'], size=num_unroll_steps - 1, axis=-1)
+    reward_target_source = pad_zeros(trajectory['rewards'], size=num_unroll_steps - 1, axis=-1)
+    # Pad action probs with uniform policy
+    policy_target_source = pad_values(
+        jnp.exp(trajectory['mcts_reanalyze']['log_action_probs']),
+        size=num_unroll_steps - 1, value=1.0 / num_actions, axis=-2)
+
+    def unroll_step_loop_body(unroll_step, loop_state):
+        trajectory_targets, state_is_terminal_or_after = loop_state
+
+        state_is_terminal_or_after_extra_dim = jnp.expand_dims(state_is_terminal_or_after, axis=-1)
+
+        actions = jax.lax.dynamic_slice_in_dim(actions_target_source, unroll_step, num_timestamps, axis=0)
+        state_value_targets_scalar = jax.lax.dynamic_slice_in_dim(value_target_source, unroll_step, num_timestamps, axis=0)
+        reward_targets_scalar = jax.lax.dynamic_slice_in_dim(reward_target_source, unroll_step, num_timestamps, axis=0)
+        policy_targets = jax.lax.dynamic_slice_in_dim(policy_target_source, unroll_step, num_timestamps, axis=0)
+
+        # Value and reward targets are zero after we've reached a terminal state
+        state_value_targets_scalar = jnp.where(state_is_terminal_or_after, 0.0, state_value_targets_scalar)
+        reward_targets_scalar = jnp.where(state_is_terminal_or_after, 0.0, reward_targets_scalar)
+
+        # Policy target is uniform after we've reached a terminal state
+        policy_targets = jnp.where(
+            state_is_terminal_or_after_extra_dim, jnp.full_like(policy_targets, 1.0 / num_actions), policy_targets)
+
+        done = jax.lax.dynamic_slice_in_dim(done_target_source, unroll_step, num_timestamps, axis=0)
+        next_state_is_terminal_or_after = jnp.logical_or(state_is_terminal_or_after, done)
+
+        next_state_value_targets_scalar = jax.lax.dynamic_slice_in_dim(
+            value_target_source, unroll_step + 1, num_timestamps, axis=0)
+        afterstate_value_targets_scalar = (
+            reward_targets_scalar +
+            math.sqrt(discount_factor) *  # We take square root here for consistency with discount factor passed to MCTS
+            jnp.where(next_state_is_terminal_or_after, 0.0, next_state_value_targets_scalar)
+        )
+
+        # Update the current slice of the training targets with the computed values
+        trajectory_targets = pytree.update(trajectory_targets, {
+            'state_value_scalar': trajectory_targets['state_value_scalar'].at[:, unroll_step].set(
+                state_value_targets_scalar),
+            'afterstate_value_scalar': trajectory_targets['afterstate_value_scalar'].at[:, unroll_step].set(
+                afterstate_value_targets_scalar),
+            'reward_scalar': trajectory_targets['reward_scalar'].at[:, unroll_step].set(reward_targets_scalar),
+            'policy': trajectory_targets['policy'].at[:, unroll_step].set(policy_targets),
+            'action': trajectory_targets['action'].at[:, unroll_step].set(actions),
+            'next_state_is_terminal_or_after':
+                trajectory_targets['next_state_is_terminal_or_after'].at[:, unroll_step].set(
+                    next_state_is_terminal_or_after),
+        })
+
+        return trajectory_targets, next_state_is_terminal_or_after
+
+    trajectory_targets, _ = jax.lax.fori_loop(
+        lower=0, upper=num_unroll_steps, body_fun=unroll_step_loop_body,
+        init_val=(trajectory_targets, jnp.zeros_like(trajectory['done']))
+    )
+
+    return trajectory_targets
+
+
+def compute_one_hot_targets(trajectory_targets, value_reward_transform):
+    return {
+        'reward_discrete': value_reward_transform(trajectory_targets['reward_scalar']),
+        'state_value_discrete': value_reward_transform(trajectory_targets['state_value_scalar']),
+        'afterstate_value_discrete': value_reward_transform(trajectory_targets['afterstate_value_scalar']),
+    }
+
+
+def make_value_reward_transform_pair(min_value, max_value, num_bins):
+    def apply(x):
+        return rlax.transform_to_2hot(x, min_value, max_value, num_bins)
+
+    def apply_inv(x):
+        result = rlax.transform_from_2hot(x, min_value, max_value, num_bins)
+        if len(x.shape) == 1:
+            # Work around a weird behavior of rlax.transform_from_2hot which doesn't return scalar outputs
+            chex.assert_rank(result, 1)
+            chex.assert_axis_dimension(result, 0, 1)
+            result = jnp.squeeze(result, axis=-1)
+        return result
+
+    return rlax.TxPair(apply=apply, apply_inv=apply_inv)
