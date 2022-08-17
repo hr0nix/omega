@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 
 from omega.agents.nethack_muzero_agent import (
-    compute_training_targets, make_value_reward_transform_pair, compute_one_hot_targets
+    compute_training_targets, make_reward_transform_pair, compute_one_hot_targets
 )
 
 
@@ -77,25 +77,12 @@ def test_compute_training_targets():
 
 def test_convert_to_discrete_representation():
     targets_scalar = {
-        'reward_scalar': jnp.asarray([1.0, 0.0], dtype=jnp.float32),
-        'state_value_scalar': jnp.asarray([-1.1, -1.0], dtype=jnp.float32),
-        'afterstate_value_scalar': jnp.asarray([-0.2, 0.8], dtype=jnp.float32),
+        'reward_scalar': jnp.asarray([-1.1, 0.0, 0.8, 1.0], dtype=jnp.float32),
     }
-    transform_pair = make_value_reward_transform_pair(min_value=-1.0, max_value=1.0, num_bins=3)
+    transform_pair = make_reward_transform_pair(min_value=-1.0, max_value=1.0, num_bins=3)
     targets_discrete = compute_one_hot_targets(targets_scalar, transform_pair.apply)
     assert jnp.allclose(
         targets_discrete['reward_discrete'],
-        jnp.asarray([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]], dtype=jnp.float32),
+        jnp.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.2, 0.8], [0.0, 0.0, 1.0]], dtype=jnp.float32),
         rtol=1e-4,
     )
-    assert jnp.allclose(
-        targets_discrete['state_value_discrete'],
-        jnp.asarray([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32),
-        rtol=1e-4,
-    )
-    assert jnp.allclose(
-        targets_discrete['afterstate_value_discrete'],
-        jnp.asarray([[0.2, 0.8, 0.0], [0.0, 0.2, 0.8]], dtype=jnp.float32),
-        rtol=1e-4,
-    )
-

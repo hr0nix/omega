@@ -50,8 +50,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'num_train_steps': 1,
         'reanalyze_batch_size': 8,
         'warmup_days': 0,
-        'value_reward_bins': 64,
-        'value_reward_min_max': (-1.0, 1.0),
+        'reward_bins': 64,
+        'reward_min_max': (-1.0, 1.0),
         'chance_outcome_commitment_loss_weight': 50.0,
         'chance_outcome_prediction_loss_weight': 1.0,
         'policy_loss_weight': 1.0,
@@ -93,10 +93,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._replay_buffer = replay_buffer
         self._current_train_step = 0
 
-        self._value_reward_transform_pair = make_value_reward_transform_pair(
-            min_value=self._config['value_reward_min_max'][0],
-            max_value=self._config['value_reward_min_max'][1],
-            num_bins=self._config['value_reward_bins'],
+        self._reward_transform_pair = make_reward_transform_pair(
+            min_value=self._config['reward_min_max'][0],
+            max_value=self._config['reward_min_max'][1],
+            num_bins=self._config['reward_bins'],
         )
 
         self._build_model(model_factory)
@@ -139,7 +139,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _build_model(self, model_factory):
         self._model = model_factory(
-            num_actions=self.action_space.n, value_reward_dim=self._config['value_reward_bins'], name='muzero_model',
+            num_actions=self.action_space.n, reward_dim=self._config['reward_bins'], name='muzero_model',
             **self._config['model_config'])
         model_params = self._init_model_params()
         optimizer = self._make_optimizer()
@@ -498,19 +498,19 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             train_state, deterministic, represent_trajectory_key_batch)
 
         def prediction_fn(state, rng):
-            log_action_probs, log_value_probs = train_state.prediction_fn(
+            log_action_probs, state_value = train_state.prediction_fn(
                 train_state.params, state, deterministic=deterministic, rngs={'dropout': rng})
-            return log_action_probs, self._value_reward_transform_pair.apply_inv(log_value_probs)
+            return log_action_probs, state_value
 
         def afterstate_prediction_fn(afterstate, rng):
-            log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
+            log_chance_outcome_probs, afterstate_value = train_state.afterstate_prediction_fn(
                 train_state.params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
-            return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(log_afterstate_value_probs)
+            return log_chance_outcome_probs, afterstate_value
 
         def dynamics_fn(afterstate, chance_outcome, rng):
             next_state, reward_log_probs = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome, deterministic=deterministic, rngs={'dropout': rng})
-            return next_state, self._value_reward_transform_pair.apply_inv(reward_log_probs)
+            return next_state, self._reward_transform_pair.apply_inv(reward_log_probs)
 
         def afterstate_dynamics_fn(prev_state, action, rng):
             afterstate = train_state.afterstate_dynamics_fn(
@@ -622,8 +622,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 chance_outcomes_one_hot_padded = pad_one_hot(chance_outcomes_one_hot, num_unroll_steps, 0)
 
                 # TODO: remove me
-                afterstate_value_l2_loss = 0.0
-                state_value_l2_loss = 0.0
                 reward_l2_loss = 0.0
                 # end of TODO
                 state_value_loss = 0.0
@@ -642,8 +640,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     next_state_is_terminal_or_after = trajectory['training_targets']['next_state_is_terminal_or_after'][:, unroll_step]
                     next_state_is_terminal_or_after_extra_dim = jnp.expand_dims(
                         next_state_is_terminal_or_after, axis=1)
-                    state_value_targets = trajectory['training_targets']['state_value_discrete'][:, unroll_step]
-                    afterstate_value_targets = trajectory['training_targets']['afterstate_value_discrete'][:, unroll_step]
+                    state_value_targets = trajectory['training_targets']['state_value_scalar'][:, unroll_step]
+                    afterstate_value_targets = trajectory['training_targets']['afterstate_value_scalar'][:, unroll_step]
                     reward_targets = trajectory['training_targets']['reward_discrete'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
@@ -665,8 +663,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     rng, prediction_key = jax.random.split(rng)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
                     batch_prediction_fn = jax.vmap(prediction_fn)
-                    policy_log_probs, state_value_log_probs = batch_prediction_fn(
-                        current_latent_states, prediction_key_batch)
+                    policy_log_probs, state_value = batch_prediction_fn(current_latent_states, prediction_key_batch)
 
                     # Predict the afterstate
                     def afterstate_dynamics_fn(state, action, rng):
@@ -685,7 +682,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     rng, afterstate_prediction_key = jax.random.split(rng)
                     afterstate_prediction_key_batch = jax.random.split(afterstate_prediction_key, num_timestamps)
                     batch_afterstate_prediction_fn = jax.vmap(afterstate_prediction_fn)
-                    chance_outcome_log_probs, afterstate_value_log_probs = batch_afterstate_prediction_fn(
+                    chance_outcome_log_probs, afterstate_value = batch_afterstate_prediction_fn(
                         latent_afterstates, afterstate_prediction_key_batch)
 
                     # Predict the next state and the reward
@@ -699,29 +696,18 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                         latent_afterstates, chance_outcome_one_hot_targets, dynamics_key_batch)
 
                     # Compute prediction losses
-                    step_state_value_loss = cross_entropy(labels=state_value_targets, logits=state_value_log_probs)
-                    step_afterstate_value_loss = cross_entropy(
-                        labels=afterstate_value_targets, logits=afterstate_value_log_probs)
+                    step_state_value_loss = rlax.l2_loss(state_value_targets, state_value)
+                    step_afterstate_value_loss = rlax.l2_loss(afterstate_value_targets, afterstate_value)
                     step_reward_loss = cross_entropy(labels=reward_targets, logits=reward_log_probs)
                     step_policy_loss = cross_entropy(labels=policy_targets, logits=policy_log_probs)
 
                     # TODO: remove me, just for debug
-                    afterstate_value_scalar = self._value_reward_transform_pair.apply_inv(afterstate_value_log_probs)
-                    value_scalar = self._value_reward_transform_pair.apply_inv(state_value_log_probs)
-                    reward_scalar = self._value_reward_transform_pair.apply_inv(reward_log_probs)
-                    afterstate_target_scalar = trajectory['training_targets']['afterstate_value_scalar'][:, unroll_step]
-                    state_value_target_scalar = trajectory['training_targets']['state_value_scalar'][:, unroll_step]
+                    reward_scalar = self._reward_transform_pair.apply_inv(reward_log_probs)
                     reward_target_scalar = trajectory['training_targets']['reward_scalar'][:, unroll_step]
-                    step_afterstate_value_l2_loss = rlax.l2_loss(afterstate_value_scalar, afterstate_target_scalar)
-                    step_state_value_l2_loss = rlax.l2_loss(value_scalar, state_value_target_scalar)
                     step_reward_l2_loss = rlax.l2_loss(reward_scalar, reward_target_scalar)
-                    afterstate_value_l2_loss += masked_mean(step_afterstate_value_l2_loss, next_state_valid_mask)
-                    state_value_l2_loss += masked_mean(step_state_value_l2_loss, current_state_valid_mask)
                     reward_l2_loss += masked_mean(step_reward_l2_loss, current_state_valid_mask)
 
-                    # Mask out every timestamp for which we don't have a valid target
-                    # Also apply loss scaling to make loss timestamp-independent
-
+                    # Average losses over timestamps where we have valid training targets
                     state_value_loss += masked_mean(step_state_value_loss, current_state_valid_mask)
                     reward_loss += masked_mean(step_reward_loss, current_state_valid_mask)
                     policy_loss += masked_mean(step_policy_loss, current_state_valid_mask)
@@ -749,14 +735,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Monitor the magnitude of the states to detect divergence
                     state_avg_sqr += jnp.mean(rlax.l2_loss(current_latent_states))
 
-                    # TODO: might remove this after debugging
-                    checkify.check(state_value_loss != jnp.inf, 'value loss is inf')
-                    checkify.check(afterstate_value_loss != jnp.inf, 'afterstate value loss is inf')
-                    checkify.check(reward_loss != jnp.inf, 'reward loss is inf')
-                    checkify.check(policy_loss != jnp.inf, 'policy loss is inf')
-                    checkify.check(state_similarity_loss != jnp.inf, 'state similarity loss is inf')
-                    checkify.check(chance_outcome_prediction_loss != jnp.inf, 'chance prediction loss is inf')
-
                 # Make loss independent of num_unroll_steps
                 afterstate_value_loss /= num_unroll_steps
                 state_value_loss /= num_unroll_steps
@@ -766,8 +744,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 state_similarity_loss /= num_unroll_steps
                 state_avg_sqr /= num_unroll_steps
                 # TODO: remove me
-                afterstate_value_l2_loss /= num_unroll_steps
-                state_value_l2_loss /= num_unroll_steps
                 reward_l2_loss /= num_unroll_steps
                 # end of TODO
                 loss = (
@@ -785,8 +761,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     'value_loss': state_value_loss,
                     'reward_loss': reward_loss,
                     # TODO: remove me
-                    'afterstate_value_l2_loss': afterstate_value_l2_loss,
-                    'value_l2_loss': state_value_l2_loss,
                     'reward_l2_loss': reward_l2_loss,
                     # end of TODO
                     'policy_loss': policy_loss,
@@ -877,7 +851,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def make_training_trajectory(trajectory):
             targets = compute_training_targets(
                 trajectory, self._config['num_train_unroll_steps'], self._config['discount_factor'])
-            targets = pytree.update(targets, compute_one_hot_targets(targets, self._value_reward_transform_pair.apply))
+            targets = pytree.update(targets, compute_one_hot_targets(targets, self._reward_transform_pair.apply))
             return pytree.update(trajectory, {
                 'training_targets': targets,
             })
@@ -979,15 +953,13 @@ def compute_training_targets(trajectory, num_unroll_steps, discount_factor):
     return trajectory_targets
 
 
-def compute_one_hot_targets(trajectory_targets, value_reward_transform):
+def compute_one_hot_targets(trajectory_targets, reward_transform):
     return {
-        'reward_discrete': value_reward_transform(trajectory_targets['reward_scalar']),
-        'state_value_discrete': value_reward_transform(trajectory_targets['state_value_scalar']),
-        'afterstate_value_discrete': value_reward_transform(trajectory_targets['afterstate_value_scalar']),
+        'reward_discrete': reward_transform(trajectory_targets['reward_scalar']),
     }
 
 
-def make_value_reward_transform_pair(min_value, max_value, num_bins):
+def make_reward_transform_pair(min_value, max_value, num_bins):
     def apply(x):
         return rlax.transform_to_2hot(x, min_value, max_value, num_bins)
 
