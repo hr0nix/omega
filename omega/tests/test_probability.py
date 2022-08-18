@@ -2,8 +2,9 @@ import math
 
 import chex
 import jax.numpy as jnp
+import rlax
 
-from omega.math.probability import entropy, cross_entropy
+from omega.math.probability import entropy, cross_entropy, ensemble_mean_stddev
 
 
 def test_entropy():
@@ -71,3 +72,17 @@ def test_batch_cross_entropy():
         cross_entropy_value,
         jnp.asarray([0.0, -0.5 * math.log(0.3) - 0.5 * math.log(0.7)])
     )
+
+
+def test_ensemble_mean_stddev():
+    support = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
+    ensemble_log_probs = jnp.log(jnp.asarray([
+        [0.3, 0.7], [0.5, 0.5],
+    ]))
+    mean, stddev = ensemble_mean_stddev(ensemble_log_probs, support)
+    chex.assert_rank([mean, stddev], 0)
+    p0, p1 = (0.3 + 0.5) * 0.5, (0.7 + 0.5) * 0.5
+    assert jnp.allclose(mean, 0.0 * p0 + 1.0 * p1)
+    assert jnp.allclose(stddev, jnp.sqrt(p0 * (mean - 0.0) ** 2 + p1 * (mean - 1.0) ** 2))
+
+
