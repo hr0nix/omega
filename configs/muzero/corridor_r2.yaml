@@ -20,7 +20,7 @@ agent_config:
   update_next_trajectory_memory: true
   lr: 0.001
   max_gradient_norm: 5.0
-  discount_factor: 0.95
+  discount_factor: 0.99
   num_train_unroll_steps: 5
   reanalyze_batch_size: 64
   num_train_steps: 8
