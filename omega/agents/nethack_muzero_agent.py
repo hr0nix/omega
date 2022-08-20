@@ -52,6 +52,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'warmup_days': 0,
         'value_reward_bins': 64,
         'value_reward_min_max': (-1.0, 1.0),
+        'mcts_reward_ensemble_size': 5,
         'chance_outcome_commitment_loss_weight': 50.0,
         'chance_outcome_prediction_loss_weight': 1.0,
         'policy_loss_weight': 1.0,
@@ -116,7 +117,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         dynamics_params = self._model.init(
             {'dropout': self.next_random_key(), 'params': self.next_random_key()},
             *self._make_fake_dynamics_inputs(),
-            method=self._model.dynamics, deterministic=False)
+            method=self._model.dynamics, deterministic=False, reward_ensemble_size=1)
         afterstate_dynamics_params = self._model.init(
             {'dropout': self.next_random_key(), 'params': self.next_random_key()},
             *self._make_fake_afterstate_dynamics_inputs(),
@@ -511,7 +512,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         def dynamics_fn(afterstate, chance_outcome, rng):
             next_state, log_reward_probs = train_state.dynamics_fn(
-                train_state.params, afterstate, chance_outcome, deterministic=deterministic, rngs={'dropout': rng})
+                train_state.params, afterstate, chance_outcome,
+                reward_ensemble_size=self._config['mcts_reward_ensemble_size'],
+                deterministic=deterministic, rngs={'dropout': rng})
             reward_probs = jnp.exp(log_reward_probs)
             return next_state, self._value_reward_transform_pair.apply_inv(reward_probs)
 
@@ -664,7 +667,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                     # Predict state value and the next action
                     def prediction_fn(state, rng):
-                        return train_state.prediction_fn(params, state, deterministic, rngs={'dropout': rng})
+                        return train_state.prediction_fn(
+                            params, state, deterministic=deterministic, rngs={'dropout': rng})
                     rng, prediction_key = jax.random.split(rng)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
                     batch_prediction_fn = jax.vmap(prediction_fn)
@@ -674,7 +678,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the afterstate
                     def afterstate_dynamics_fn(state, action, rng):
                         return train_state.afterstate_dynamics_fn(
-                            params, state, action, deterministic, rngs={'dropout': rng})
+                            params, state, action, deterministic=deterministic, rngs={'dropout': rng})
                     rng, afterstate_dynamics_key = jax.random.split(rng)
                     afterstate_dynamics_key_batch = jax.random.split(afterstate_dynamics_key, num_timestamps)
                     batch_afterstate_dynamics_fn = jax.vmap(afterstate_dynamics_fn)
@@ -684,7 +688,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the afterstate value and the chance outcome
                     def afterstate_prediction_fn(afterstate, rng):
                         return train_state.afterstate_prediction_fn(
-                            params, afterstate, deterministic, rngs={'dropout': rng})
+                            params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
                     rng, afterstate_prediction_key = jax.random.split(rng)
                     afterstate_prediction_key_batch = jax.random.split(afterstate_prediction_key, num_timestamps)
                     batch_afterstate_prediction_fn = jax.vmap(afterstate_prediction_fn)
@@ -694,7 +698,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the next state and the reward
                     def dynamics_fn(latent_afterstate, chance_outcome_one_hot, rng):
                         return train_state.dynamics_fn(
-                            params, latent_afterstate, chance_outcome_one_hot, deterministic, rngs={'dropout': rng})
+                            params, latent_afterstate, chance_outcome_one_hot,
+                            deterministic=deterministic, rngs={'dropout': rng})
                     rng, dynamics_key = jax.random.split(rng)
                     dynamics_key_batch = jax.random.split(dynamics_key, num_timestamps)
                     batch_dynamics_fn = jax.vmap(dynamics_fn)

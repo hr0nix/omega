@@ -17,18 +17,21 @@ def cross_entropy(labels, logits):
     return -jnp.sum(labels * log_probs_masked, axis=-1)
 
 
-def ensemble_mean_stddev(ensemble_log_probs, support):
+def ensemble_mean_stddev(ensemble_logits, support, axis=0):
     """
     Given a uniform mixture of categorical distributions, compute the mean and the standard deviation of the mixture.
-    Axis -2 corresponds to mixture elements, axis -1 corresponds to categorical outcomes.
-    Support maps the categorical outcomes to the actual elements they represent.
+    @param ensemble_logits: logits of the mixture of categorical distributions.
+    @param support: an array mapping categorical distribution outcomes to the actual values they represent.
+    @param axis: the ensemble dimension of the input tensor.
     """
-    assert len(ensemble_log_probs.shape) >= 2
+    assert len(ensemble_logits.shape) >= 2
     assert len(support.shape) == 1
-    chex.assert_equal_shape_suffix([ensemble_log_probs, support], 1)
+    chex.assert_equal_shape_suffix([ensemble_logits, support], 1)
 
-    log_normalizer = jnp.log(ensemble_log_probs.shape[-2])
-    aggregate_log_probs = jax.nn.logsumexp(ensemble_log_probs - log_normalizer, axis=-2)
+    ensemble_log_probs = jax.nn.log_softmax(ensemble_logits, axis=-1)
+
+    log_normalizer = jnp.log(ensemble_log_probs.shape[axis])
+    aggregate_log_probs = jax.nn.logsumexp(ensemble_log_probs - log_normalizer, axis=axis)
     aggregate_probs = jnp.exp(aggregate_log_probs)
     mean = jnp.sum(aggregate_probs * support, axis=-1)
     mean_sqr = jnp.sum(aggregate_probs * support ** 2, axis=-1)

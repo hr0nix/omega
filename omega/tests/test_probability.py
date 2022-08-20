@@ -79,7 +79,7 @@ def test_ensemble_mean_stddev():
     ensemble_log_probs = jnp.log(jnp.asarray([
         [0.3, 0.7], [0.5, 0.5],
     ]))
-    mean, stddev = ensemble_mean_stddev(ensemble_log_probs, support)
+    mean, stddev = ensemble_mean_stddev(ensemble_log_probs, support, axis=0)
     chex.assert_rank([mean, stddev], 0)
     p0, p1 = (0.3 + 0.5) * 0.5, (0.7 + 0.5) * 0.5
     assert jnp.allclose(mean, 0.0 * p0 + 1.0 * p1)

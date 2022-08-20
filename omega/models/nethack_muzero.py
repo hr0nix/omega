@@ -11,38 +11,10 @@ from omega.neural import CrossTransformerNet
 from ..utils import pytree
 from .nethack_state_encoder import PerceiverNethackStateEncoder
 from .base import ItemSelector, ItemPredictor, OneToManyAttentionItemPredictor
+from ..neural.ensemble import DropoutEnsemble
 
 
-class NethackMuZeroModelBase(nn.Module):
-    def latent_state_shape(self):
-        raise NotImplementedError()
-
-    def memory_shape(self):
-        raise NotImplementedError()
-
-    def initial_memory_state(self):
-        raise NotImplementedError()
-
-    def chance_outcome_encoder(self, latent_state, deterministic=None):
-        raise NotImplementedError()
-
-    def representation(self, prev_memory, prev_action, observation, deterministic=None):
-        raise NotImplementedError()
-
-    def afterstate_dynamics(self, previous_latent_state, action, deterministic=None):
-        raise NotImplementedError()
-
-    def dynamics(self, latent_afterstate, chance_outcome, deterministic=None):
-        raise NotImplementedError()
-
-    def afterstate_prediction(self, latent_afterstate, deterministic=None):
-        raise NotImplementedError()
-
-    def prediction(self, latent_state, deterministic=None):
-        raise NotImplementedError()
-
-
-class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
+class NethackPerceiverMuZeroModel(nn.Module):
     num_actions: int
     num_chance_outcomes: int
     value_reward_dim: int
@@ -98,10 +70,16 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             dim=self._state_encoder.memory_dim,
             **self.dynamics_transformer_config,
             name='afterstate_dynamics_transformer')
-        self._reward_predictor = OneToManyAttentionItemPredictor(
-            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
-            **self.scalar_predictor_config,
-            name='reward_predictor')
+        self._reward_predictor = DropoutEnsemble(
+            OneToManyAttentionItemPredictor,
+            dict(
+                num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
+                deterministic=False,
+                **self.scalar_predictor_config,
+            ),
+            name='reward_predictor',
+        )
+        # TODO: dropout ensembles can be used to improve the quality of value prediction without uncertainty estimation
         self._value_predictor = OneToManyAttentionItemPredictor(
             num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
             **self.scalar_predictor_config,
@@ -219,7 +197,7 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
         chex.assert_rank(latent_afterstate, 3)
         return pytree.squeeze(latent_afterstate, axis=0)
 
-    def dynamics(self, latent_afterstate, chance_outcome_one_hot, deterministic=None):
+    def dynamics(self, latent_afterstate, chance_outcome_one_hot, reward_ensemble_size=1, deterministic=None):
         """
         Produces the next latent state and reward if a given chance outcome happens at a given afterstate.
         Inputs are assumed to be non-batched.
@@ -240,14 +218,16 @@ class NethackPerceiverMuZeroModel(NethackMuZeroModelBase):
             latent_afterstate, latent_afterstate_with_chance_outcome, deterministic=deterministic)
         next_latent_state = self._maybe_normalize_state(next_latent_state)
 
-        reward_logits = self._reward_predictor(
-            latent_afterstate_with_chance_outcome, deterministic=deterministic)
-        log_reward_probs = jax.nn.log_softmax(reward_logits, axis=-1)
+        reward_logits_ensemble = self._reward_predictor(latent_afterstate_with_chance_outcome, reward_ensemble_size)
+        reward_log_probs_ensemble = jax.nn.log_softmax(reward_logits_ensemble, axis=-1)
 
-        chex.assert_rank([next_latent_state, log_reward_probs], [3, 2])
+        ensemble_log_normalizer = jnp.log(reward_ensemble_size)
+        aggregated_reward_log_probs = jax.nn.logsumexp(reward_log_probs_ensemble, axis=0) - ensemble_log_normalizer
+
+        chex.assert_rank([next_latent_state, aggregated_reward_log_probs], [3, 2])
         return (
             pytree.squeeze(next_latent_state, axis=0),
-            pytree.squeeze(log_reward_probs, axis=0),
+            pytree.squeeze(aggregated_reward_log_probs, axis=0),
         )
 
     def prediction(self, latent_state, deterministic=None):

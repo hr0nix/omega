@@ -69,7 +69,6 @@ class PerceiverNethackStateEncoder(nn.Module):
                 gate=self.transformer_gate,
                 num_heads=self.memory_update_num_heads,
                 dropout_rate=self.transformer_dropout,
-                deterministic=self.deterministic,
                 name=f'perceiver_self_attention_block_{block_idx}',
             )
             for block_idx in range(self.num_perceiver_blocks)
@@ -81,7 +80,6 @@ class PerceiverNethackStateEncoder(nn.Module):
             gate=self.transformer_gate,
             num_heads=self.memory_update_num_heads,
             dropout_rate=self.transformer_dropout,
-            deterministic=self.deterministic,
             name='attention_to_prev_memory',
         )
         self._map_attention_blocks = [
@@ -92,7 +90,6 @@ class PerceiverNethackStateEncoder(nn.Module):
                 gate=self.transformer_gate,
                 num_heads=self.map_attention_num_heads,
                 dropout_rate=self.transformer_dropout,
-                deterministic=self.deterministic,
                 name=f'perceiver_map_attention_block_{block_idx}',
             )
             for block_idx in range(self.num_perceiver_blocks)

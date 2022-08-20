@@ -24,8 +24,8 @@ class TransformerBlock(nn.Module):
         self._att_norm_q = nn.LayerNorm()
         self._att_norm_kv = nn.LayerNorm()
         self._fc_norm = nn.LayerNorm()
-        self._att_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
-        self._fc_dropout = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)
+        self._att_dropout = nn.Dropout(rate=self.dropout_rate)
+        self._fc_dropout = nn.Dropout(rate=self.dropout_rate)
         self._attention_gate = Gate(self.gate)
         self._fc_gate = Gate(self.gate)
 
@@ -71,7 +71,6 @@ class TransformerNetBase(nn.Module):
                 num_heads=self.num_heads,
                 dropout_rate=self.dropout_rate,
                 gate=self.gate,
-                deterministic=self.deterministic,
                 name=f'block_{block_idx}',
             )
             for block_idx in range(self.num_blocks)

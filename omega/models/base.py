@@ -47,7 +47,6 @@ class ItemSelector(nn.Module):
             fc_inner_dim=self.transformer_fc_inner_dim,
             num_heads=self.transformer_num_heads,
             dropout_rate=self.transformer_dropout,
-            deterministic=self.deterministic,
             gate=self.transformer_gate,
             name='selection_transformer'.format(self.name),
         )
@@ -88,7 +87,6 @@ class ItemPredictor(nn.Module):
             num_heads=self.transformer_num_heads,
             dropout_rate=self.transformer_dropout,
             gate=self.transformer_gate,
-            deterministic=self.deterministic,
             name='selection_transformer',
         )
         self._output_embedder = ItemEmbedder(
@@ -133,7 +131,6 @@ class OneToManyAttentionItemPredictor(nn.Module):
             num_heads=self.transformer_num_heads,
             dropout_rate=self.transformer_dropout,
             gate=self.transformer_gate,
-            deterministic=self.deterministic,
             name='selection_transformer',
         )
         self._output_embedder = ItemEmbedder(

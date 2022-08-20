@@ -45,7 +45,6 @@ class NethackPerceiverActorCriticModel(nn.Module):
             fc_inner_dim=self.transformer_fc_inner_dim,
             num_heads=self.output_attention_num_heads,
             dropout_rate=self.transformer_dropout,
-            deterministic=self.deterministic,
             name='output_transformer',
         )
         self._policy_network = ItemSelector(
@@ -54,7 +53,6 @@ class NethackPerceiverActorCriticModel(nn.Module):
             transformer_num_heads=self.num_policy_network_heads,
             transformer_fc_inner_dim=self.transformer_fc_inner_dim,
             transformer_dropout=self.transformer_dropout,
-            deterministic=self.deterministic,
             name='policy_network',
         )
         self._inverse_dynamics_model = ItemSelector(
@@ -63,7 +61,6 @@ class NethackPerceiverActorCriticModel(nn.Module):
             transformer_num_heads=self.num_inverse_dynamics_network_heads,
             transformer_fc_inner_dim=self.transformer_fc_inner_dim,
             transformer_dropout=self.transformer_dropout,
-            deterministic=self.deterministic,
             name='inverse_dynamics_model',
         )
         self._value_network = DenseNet(
