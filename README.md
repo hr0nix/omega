@@ -20,7 +20,7 @@ This repo contains and implementation of an agent that can learn to maximise rew
 * Training and inference is implemented in [JAX](https://github.com/google/jax), with the help of [rlax](https://github.com/deepmind/rlax) and [optax](https://github.com/deepmind/optax)
 * Models are implemented in JAX/[Flax](https://github.com/google/flax)
 
-## How to train an agent
+## How to train an agent (with docker)
 1. Clone the repository:
 ```bash
 git clone https://github.com/hr0nix/omega.git
@@ -42,3 +42,27 @@ python3.8 ./tools/experiment_manager.py run --dir ./experiments/muzero_random_ro
 python3.8 ./tools/experiment_manager.py play --file ./experiments/muzero_random_room_5x5/episodes/<EPISODE_FILENAME_HERE>
 ```
 
+
+## How to train an agent (with conda, without docker)
+1. Create conda env
+```bash
+conda create -n omega python=3.8
+conda activate omega
+```
+2. Clone the repository and install the omega module:
+```bash
+git clone https://github.com/hr0nix/omega.git
+pip install -e "omega[cuda]"    # or cpu
+```
+3. Create a new experiment based on one of the provided configs:
+```bash
+python -m tools.experiment_manager make --config ./omega/configs/muzero/random_room_5x5.yaml --output-dir ./omega/experiments/muzero_random_room_5x5
+```
+4. Run the newly created experiment. You can optionally track the experiment using [wandb](https://wandb.ai) (you will be asked if you want to, definitely recommended).
+```bash
+python -m tools.experiment_manager run --dir ./omega/experiments/muzero_random_room_5x5 --gpu 0
+```
+5. After some episodes are completed, you can visualize them:
+```bash
+python -m tools.experiment_manager play --file ./omega/experiments/muzero_random_room_5x5/episodes/<EPISODE_FILENAME_HERE>
+```
