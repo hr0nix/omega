@@ -26,6 +26,11 @@ def pad_one_hot(tensor, size, value):
     return jnp.concatenate([tensor, padding], axis=-2)
 
 
+def tile_along_new_axis(tensor, axis, num_reps):
+    tensor = jnp.expand_dims(tensor, axis=axis)
+    return jnp.repeat(tensor, num_reps, axis=axis)
+
+
 def masked_mean(tensor, mask, axis=None, keepdims=False, allow_zero_mask=False):
     chex.assert_is_broadcastable(mask.shape, tensor.shape)
     chex.assert_type(mask, jnp.bool_)

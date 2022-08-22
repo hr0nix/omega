@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import chex
 
-from omega.utils.tensor import pad_zeros, pad_one_hot, masked_mean
+from omega.utils.tensor import pad_zeros, pad_one_hot, masked_mean, tile_along_new_axis
 
 
 def test_pad_zeros_1d():
@@ -62,3 +62,11 @@ def test_masked_mean_nan():
     mean = masked_mean(tensor, mask)
     chex.assert_shape(mean, ())
     assert jnp.isnan(masked_mean(tensor, mask))
+
+
+def test_tile_along_new_axis():
+    tensor = jnp.asarray([1.0, 2.0, 3.0])
+
+    tiled_tensor = tile_along_new_axis(tensor, axis=0, num_reps=2)
+    chex.assert_shape(tiled_tensor, (2, 3))
+    assert jnp.allclose(tiled_tensor, jnp.asarray([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]))
