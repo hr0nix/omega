@@ -9,6 +9,7 @@ import chex
 from omega.neural import CrossTransformerNet
 
 from ..utils import pytree
+from ..math.probability import aggregate_mixture_log_probs
 from .nethack_state_encoder import PerceiverNethackStateEncoder
 from .base import ItemSelector, ItemPredictor, OneToManyAttentionItemPredictor
 from ..neural.ensemble import DropoutEnsemble
@@ -74,20 +75,26 @@ class NethackPerceiverMuZeroModel(nn.Module):
             OneToManyAttentionItemPredictor,
             dict(
                 num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
-                deterministic=False,
-                **self.scalar_predictor_config,
+                deterministic=False, **self.scalar_predictor_config,
             ),
             name='reward_predictor',
         )
-        # TODO: dropout ensembles can be used to improve the quality of value prediction without uncertainty estimation
-        self._value_predictor = OneToManyAttentionItemPredictor(
-            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
-            **self.scalar_predictor_config,
-            name='value_predictor')
-        self._afterstate_value_predictor = OneToManyAttentionItemPredictor(
-            num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
-            **self.scalar_predictor_config,
-            name='afterstate_value_predictor')
+        self._value_predictor = DropoutEnsemble(
+            OneToManyAttentionItemPredictor,
+            dict(
+                num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
+                deterministic=False,**self.scalar_predictor_config,
+            ),
+            name='value_predictor',
+        )
+        self._afterstate_value_predictor = DropoutEnsemble(
+            OneToManyAttentionItemPredictor,
+            dict(
+                num_outputs=self.value_reward_dim, transformer_dim=self._state_encoder.memory_dim,
+                deterministic=False, **self.scalar_predictor_config,
+            ),
+            name='afterstate_value_predictor',
+        )
         self._chance_outcome_predictor = ItemSelector(
             transformer_dim=self._state_encoder.memory_dim,
             **self.action_outcome_predictor_config,
@@ -197,7 +204,7 @@ class NethackPerceiverMuZeroModel(nn.Module):
         chex.assert_rank(latent_afterstate, 3)
         return pytree.squeeze(latent_afterstate, axis=0)
 
-    def dynamics(self, latent_afterstate, chance_outcome_one_hot, reward_ensemble_size=1, deterministic=None):
+    def dynamics(self, latent_afterstate, chance_outcome_one_hot, ensemble_size=1, deterministic=None):
         """
         Produces the next latent state and reward if a given chance outcome happens at a given afterstate.
         Inputs are assumed to be non-batched.
@@ -218,11 +225,9 @@ class NethackPerceiverMuZeroModel(nn.Module):
             latent_afterstate, latent_afterstate_with_chance_outcome, deterministic=deterministic)
         next_latent_state = self._maybe_normalize_state(next_latent_state)
 
-        reward_logits_ensemble = self._reward_predictor(latent_afterstate_with_chance_outcome, reward_ensemble_size)
+        reward_logits_ensemble = self._reward_predictor(latent_afterstate_with_chance_outcome, ensemble_size)
         reward_log_probs_ensemble = jax.nn.log_softmax(reward_logits_ensemble, axis=-1)
-
-        ensemble_log_normalizer = jnp.log(reward_ensemble_size)
-        aggregated_reward_log_probs = jax.nn.logsumexp(reward_log_probs_ensemble, axis=0) - ensemble_log_normalizer
+        aggregated_reward_log_probs = aggregate_mixture_log_probs(reward_log_probs_ensemble, axis=0)
 
         chex.assert_rank([next_latent_state, aggregated_reward_log_probs], [3, 2])
         return (
@@ -230,7 +235,7 @@ class NethackPerceiverMuZeroModel(nn.Module):
             pytree.squeeze(aggregated_reward_log_probs, axis=0),
         )
 
-    def prediction(self, latent_state, deterministic=None):
+    def prediction(self, latent_state, ensemble_size=1, deterministic=None):
         """
         Computes the policy and the value estimate for a single (non-batched) state.
         """
@@ -246,16 +251,17 @@ class NethackPerceiverMuZeroModel(nn.Module):
         all_action_embeddings = pytree.expand_dims(all_action_embeddings, axis=0)
         log_action_probs = self._policy_network(all_action_embeddings, latent_state, deterministic=deterministic)
 
-        value_logits = self._value_predictor(latent_state, deterministic=deterministic)
-        log_value_probs = jax.nn.log_softmax(value_logits, axis=-1)
+        value_logits_ensemble = self._value_predictor(latent_state, ensemble_size)
+        value_log_probs_ensemble = jax.nn.log_softmax(value_logits_ensemble, axis=-1)
+        aggregated_value_log_probs = aggregate_mixture_log_probs(value_log_probs_ensemble, axis=0)
 
-        chex.assert_rank([log_action_probs, log_value_probs], [2, 2])
+        chex.assert_rank([log_action_probs, aggregated_value_log_probs], [2, 2])
         return (
             pytree.squeeze(log_action_probs, axis=0),
-            pytree.squeeze(log_value_probs, axis=0)
+            pytree.squeeze(aggregated_value_log_probs, axis=0)
         )
 
-    def afterstate_prediction(self, latent_afterstate, deterministic=None):
+    def afterstate_prediction(self, latent_afterstate, ensemble_size=1, deterministic=None):
         """
         Computes the chance outcome distribution and the value estimate for a single (non-batched) afterstate.
         """
@@ -273,11 +279,12 @@ class NethackPerceiverMuZeroModel(nn.Module):
         log_chance_outcome_probs = self._chance_outcome_predictor(
             all_chance_outcome_embeddings, latent_afterstate, deterministic=deterministic)
 
-        afterstate_value_logits = self._afterstate_value_predictor(latent_afterstate, deterministic=deterministic)
-        log_afterstate_value_probs = jax.nn.log_softmax(afterstate_value_logits, axis=-1)
+        afterstate_value_logits_ensemble = self._afterstate_value_predictor(latent_afterstate, ensemble_size)
+        afterstate_value_log_probs_ensemble = jax.nn.log_softmax(afterstate_value_logits_ensemble, axis=-1)
+        aggregated_afterstate_value_log_probs = aggregate_mixture_log_probs(afterstate_value_log_probs_ensemble, axis=0)
 
-        chex.assert_rank([log_chance_outcome_probs, log_afterstate_value_probs], [2, 2])
+        chex.assert_rank([log_chance_outcome_probs, aggregated_afterstate_value_log_probs], [2, 2])
         return (
             pytree.squeeze(log_chance_outcome_probs, axis=0),
-            pytree.squeeze(log_afterstate_value_probs, axis=0)
+            pytree.squeeze(aggregated_afterstate_value_log_probs, axis=0)
         )

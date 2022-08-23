@@ -4,7 +4,7 @@ import chex
 import jax.numpy as jnp
 import rlax
 
-from omega.math.probability import entropy, cross_entropy, ensemble_mean_stddev
+from omega.math.probability import entropy, cross_entropy, aggregate_mixture_log_probs, categorical_mean_stddev
 
 
 def test_entropy():
@@ -74,15 +74,32 @@ def test_batch_cross_entropy():
     )
 
 
-def test_ensemble_mean_stddev():
-    support = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
-    ensemble_log_probs = jnp.log(jnp.asarray([
+def test_aggregate_mixture_log_probs():
+    mixture_log_probs = jnp.log(jnp.asarray([
         [0.3, 0.7], [0.5, 0.5],
     ]))
-    mean, stddev = ensemble_mean_stddev(ensemble_log_probs, support, axis=0)
-    chex.assert_rank([mean, stddev], 0)
-    p0, p1 = (0.3 + 0.5) * 0.5, (0.7 + 0.5) * 0.5
-    assert jnp.allclose(mean, 0.0 * p0 + 1.0 * p1)
-    assert jnp.allclose(stddev, jnp.sqrt(p0 * (mean - 0.0) ** 2 + p1 * (mean - 1.0) ** 2))
+    log_probs = aggregate_mixture_log_probs(mixture_log_probs, axis=0)
+    chex.assert_shape(log_probs, (2,))
+    assert jnp.allclose(log_probs, jnp.log(jnp.asarray([(0.3 + 0.5) * 0.5, (0.7 + 0.5) * 0.5])))
+
+
+def test_categorical_mean_stddev():
+    support = jnp.asarray([-1.0, 0.0, 1.0], dtype=jnp.float32)
+    log_probs = jnp.log(jnp.asarray([
+        [0.3, 0.5, 0.2],
+        [0.8, 0.2, 0.0],
+    ]))
+    mean, stddev = categorical_mean_stddev(log_probs, support)
+    chex.assert_shape([mean, stddev], (2,))
+    assert jnp.allclose(mean[0], -1.0 * 0.3 + 1.0 * 0.2)
+    assert jnp.allclose(mean[1], -1.0 * 0.8)
+    assert jnp.allclose(
+        stddev[0],
+        jnp.sqrt(0.3 * (mean[0] + 1.0) ** 2 + 0.5 * mean[0] ** 2 + 0.2 * (mean[0] - 1.0) ** 2)
+    )
+    assert jnp.allclose(
+        stddev[1],
+        jnp.sqrt(0.8 * (mean[1] + 1.0) ** 2 + 0.2 * mean[1] ** 2)
+    )
 
 

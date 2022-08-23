@@ -20,6 +20,7 @@ import jax.experimental.host_callback
 import jax.experimental.checkify as checkify
 import rlax
 import optax
+#import optax_adan
 
 from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
@@ -52,7 +53,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         'warmup_days': 0,
         'value_reward_bins': 64,
         'value_reward_min_max': (-1.0, 1.0),
-        'mcts_reward_ensemble_size': 5,
+        'mcts_value_reward_ensemble_size': 1,
         'chance_outcome_commitment_loss_weight': 50.0,
         'chance_outcome_prediction_loss_weight': 1.0,
         'policy_loss_weight': 1.0,
@@ -117,7 +118,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         dynamics_params = self._model.init(
             {'dropout': self.next_random_key(), 'params': self.next_random_key()},
             *self._make_fake_dynamics_inputs(),
-            method=self._model.dynamics, deterministic=False, reward_ensemble_size=1)
+            method=self._model.dynamics, deterministic=False)
         afterstate_dynamics_params = self._model.init(
             {'dropout': self.next_random_key(), 'params': self.next_random_key()},
             *self._make_fake_afterstate_dynamics_inputs(),
@@ -181,6 +182,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return optax.chain(
             optax.clip_by_global_norm(self._config['max_gradient_norm']),
             optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
+            #optax_adan.adan(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
         )
 
     def _make_fake_observation(self):
@@ -500,20 +502,24 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         def prediction_fn(state, rng):
             log_action_probs, log_value_probs = train_state.prediction_fn(
-                train_state.params, state, deterministic=deterministic, rngs={'dropout': rng})
+                train_state.params, state,
+                ensemble_size=self._config['mcts_value_reward_ensemble_size'],
+                deterministic=deterministic, rngs={'dropout': rng})
             value_probs = jnp.exp(log_value_probs)
             return log_action_probs, self._value_reward_transform_pair.apply_inv(value_probs)
 
         def afterstate_prediction_fn(afterstate, rng):
             log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
-                train_state.params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
+                train_state.params, afterstate,
+                ensemble_size=self._config['mcts_value_reward_ensemble_size'],
+                deterministic=deterministic, rngs={'dropout': rng})
             afterstate_value_probs = jnp.exp(log_afterstate_value_probs)
             return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(afterstate_value_probs)
 
         def dynamics_fn(afterstate, chance_outcome, rng):
             next_state, log_reward_probs = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome,
-                reward_ensemble_size=self._config['mcts_reward_ensemble_size'],
+                ensemble_size=self._config['mcts_value_reward_ensemble_size'],
                 deterministic=deterministic, rngs={'dropout': rng})
             reward_probs = jnp.exp(log_reward_probs)
             return next_state, self._value_reward_transform_pair.apply_inv(reward_probs)
