@@ -20,7 +20,7 @@ import jax.experimental.host_callback
 import jax.experimental.checkify as checkify
 import rlax
 import optax
-#import optax_adan
+import optax_adan
 
 from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
@@ -181,8 +181,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return optax.chain(
             optax.clip_by_global_norm(self._config['max_gradient_norm']),
-            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
-            #optax_adan.adan(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
+            #optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
+            optax_adan.adan(learning_rate=lr_schedule),
         )
 
     def _make_fake_observation(self):
