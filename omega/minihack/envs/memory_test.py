@@ -1,7 +1,7 @@
 import os.path
 
-from gym.envs import registration
 from minihack import MiniHackNavigation, RewardManager
+from minihack.envs import register
 
 
 DES_PATH = os.path.join(os.path.dirname(__file__), 'des')
@@ -80,55 +80,55 @@ class MiniHackMemoryTest11Steps(MiniHackMemoryTestBase):
         super().__init__(*args, des_file='memory_test_11_steps.des', **kwargs)
 
 
-registration.register(
+register(
     id="MiniHack-CreditAssignmentTest-v0",
     entry_point="omega.minihack.envs:MiniHackCreditAssignmentTest",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-4-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest4Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-5-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest5Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-6-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest6Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-7-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest7Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-8-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest8Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-9-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest9Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-10-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest10Steps",
 )
 
 
-registration.register(
+register(
     id="MiniHack-MemoryTest-11-v0",
     entry_point="omega.minihack.envs:MiniHackMemoryTest11Steps",
 )

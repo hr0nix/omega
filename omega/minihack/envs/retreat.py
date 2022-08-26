@@ -1,7 +1,7 @@
 import os.path
 
-from gym.envs import registration
 from minihack import MiniHackNavigation, RewardManager
+from minihack.envs import register
 
 
 DES_PATH = os.path.join(os.path.dirname(__file__), 'des')
@@ -35,7 +35,7 @@ class Retreat(MiniHackNavigation):
         )
 
 
-registration.register(
+register(
     id="MiniHack-Retreat-v0",
     entry_point="omega.minihack.envs:Retreat",
 )
