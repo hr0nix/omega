@@ -302,7 +302,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         }
 
     @timeit
-    @partial(jax.jit, static_argnames=('self',))
+    @partial(jax.jit, static_argnames=('self',), donate_argnums=(2, 3))
     def _train_on_batch_jited(  # TODO: add checkify
             self, current_train_step, train_state, replay_buffer_state, trajectory_batch, rng):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
