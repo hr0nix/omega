@@ -12,9 +12,8 @@ train_config:
   replay_buffer:
     type: uniform_over_good_and_bad
     cluster_buffer:
-      type: max_age
-      max_buffer_size: 50000
-      max_age: 1
+      type: fifo
+      buffer_size: 50000
     good_total_reward_threshold: 0.5
     distribution_power: 0.5
 agent_config:
@@ -25,7 +24,7 @@ agent_config:
   discount_factor: 0.999
   num_train_steps: 1
   num_train_unroll_steps: 2
-  warmup_days: 2
+  warmup_days: 0
   reanalyze_batch_size: 1
   num_mcts_simulations: 2
   reward_values: [-0.01, 0.0, -1.0, 1.0]

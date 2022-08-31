@@ -6,14 +6,15 @@ import gym
 import minihack  # noqa
 import wandb
 import jax
+import jax.experimental.checkify as checkify
 
 from omega.agents import NethackMuZeroAgent, NethackPPOAgent
 from omega.training import OnPolicyTrainer, DummyTrainer
-from omega.training.replay_buffer import create_from_config as create_replay_buffer_from_config
+from omega.training.replay_buffer_dejax import create_from_config as create_replay_buffer_from_config
 from omega.evaluation import EvaluationStats
 from omega.utils.profiling import enable_profiling
 from omega.utils.gym import NetHackRGBRendering, NetHackBLStatsFiltering
-from omega.utils.jax import conditionally_disable_jit
+from omega.utils.jax import disable_jit, force_checkify_checks
 from omega.utils.wandb import get_wandb_id
 
 from absl import logging
@@ -70,55 +71,63 @@ def create_agent(config, env):
         raise ValueError(f'Unknown agent type: {agent_type}')
 
 
+def do_train_agent(args):
+    config = load_config(args.config)
+    train_config = config['train_config']
+
+    ray.init(num_cpus=train_config['num_workers'], local_mode=args.ray_local_mode)
+    if args.wandb_id_file is not None:
+        wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
+
+    def env_factory():
+        return make_env(train_config, episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
+
+    env = env_factory()
+    agent = create_agent(config, env)
+    trainer = OnPolicyTrainer(
+        agent=agent,
+        env_factory=env_factory,
+        num_workers=train_config['num_workers'],
+        num_envs=train_config['num_envs'],
+        num_collection_steps=train_config['num_collection_steps'],
+        allow_to_act_in_terminal_state_once=train_config['allow_to_act_in_terminal_state_once'],
+    )
+
+    start_day = 0
+    if args.checkpoints is not None:
+        start_day = agent.try_load_from_checkpoint(args.checkpoints)
+    logging.info('Starting from day {}'.format(start_day))
+
+    stats = EvaluationStats(discount_factor=config['agent_config']['discount_factor'])
+    for day in tqdm.tqdm(range(start_day, train_config['num_days'])):
+        trainer.run_training_step(stats)
+
+        if (day + 1) % train_config['epoch_every_num_days'] == 0:
+            if args.wandb_id_file is not None:
+                wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day, commit=True)
+            stats.print_summary(title='After {} days:'.format(day + 1))
+            if args.checkpoints is not None:
+                agent.save_to_checkpoint(args.checkpoints)
+
+
 def train_agent(args):
-    with conditionally_disable_jit(args.disable_jit):
-        if args.log_profile:
-            logging.info('Profiling is enabled')
-            enable_profiling()
+    with disable_jit(args.disable_jit):
+        checkify_checks = checkify.user_checks
+        if args.checkify_all:
+            logging.info('All checkify checks will be enabled')
+            checkify_checks = checkify.all_checks
+        with force_checkify_checks(checkify_checks):
+            if args.log_profile:
+                logging.info('Profiling is enabled')
+                enable_profiling()
+            if args.log_memory_transfer:
+                logging.info('Memory transfer logging is enabled')
+                jax.config.update('jax_transfer_guard', 'log')
+            if args.log_compilation:
+                logging.info('JIT compilation logging is enabled')
+                jax.config.update('jax_log_compiles', True)
 
-        if args.log_memory_transfer:
-            logging.info('Memory transfer logging is enabled')
-            jax.config.update('jax_transfer_guard', 'log')
-
-        if args.log_compilation:
-            logging.info('JIT compilation logging is enabled')
-            jax.config.update('jax_log_compiles', True)
-
-        config = load_config(args.config)
-        train_config = config['train_config']
-
-        ray.init(num_cpus=train_config['num_workers'], local_mode=args.ray_local_mode)
-        if args.wandb_id_file is not None:
-            wandb.init(project='omega', config=config, resume='allow', id=get_wandb_id(args.wandb_id_file))
-
-        def env_factory():
-            return make_env(train_config, episodes_dir=args.episodes, episode_video_dir=args.episode_videos)
-        env = env_factory()
-        agent = create_agent(config, env)
-        trainer = OnPolicyTrainer(
-            agent=agent,
-            env_factory=env_factory,
-            num_workers=train_config['num_workers'],
-            num_envs=train_config['num_envs'],
-            num_collection_steps=train_config['num_collection_steps'],
-            allow_to_act_in_terminal_state_once=train_config['allow_to_act_in_terminal_state_once'],
-        )
-
-        start_day = 0
-        if args.checkpoints is not None:
-            start_day = agent.try_load_from_checkpoint(args.checkpoints)
-        logging.info('Starting from day {}'.format(start_day))
-
-        stats = EvaluationStats(discount_factor=config['agent_config']['discount_factor'])
-        for day in tqdm.tqdm(range(start_day, train_config['num_days'])):
-            trainer.run_training_step(stats)
-
-            if (day + 1) % train_config['epoch_every_num_days'] == 0:
-                if args.wandb_id_file is not None:
-                    wandb.log(data=stats.to_dict(include_rolling_stats=True), step=day, commit=True)
-                stats.print_summary(title='After {} days:'.format(day + 1))
-                if args.checkpoints is not None:
-                    agent.save_to_checkpoint(args.checkpoints)
+            do_train_agent(args)
 
 
 def eval_agent(args):
@@ -164,6 +173,7 @@ def parse_args():
     train_parser.add_argument('--log-compilation', action='store_true', required=False, default=False)
     train_parser.add_argument('--disable-jit', action='store_true', required=False, default=False)
     train_parser.add_argument('--ray-local-mode', action='store_true', required=False, default=False)
+    train_parser.add_argument('--checkify-all', action='store_true', required=False, default=False)
     train_parser.set_defaults(func=train_agent)
 
     eval_parser = subparsers.add_parser('eval', help='Eval an agent')

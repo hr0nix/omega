@@ -16,4 +16,4 @@ pytest~=7.1.2
 wandb~=0.12.14
 array2gif~=1.0.4
 pygraphviz~=1.9
-dejax~=0.1.0
+dejax>=0.1.3

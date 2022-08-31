@@ -83,7 +83,8 @@ def array_mean(pytrees, result_backend=None):
 def get_axis_dim(pytree, axis):
     leaves = jax.tree_leaves(pytree)
     axis_dim = leaves[0].shape[axis]
-    assert all(l.shape[axis] == axis_dim for l in leaves)
+    assert all(axis < len(l.shape) and l.shape[axis] == axis_dim for l in leaves), \
+        'All leaves must have the same dimension along the axis'
     return axis_dim
 
 

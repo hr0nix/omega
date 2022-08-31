@@ -4,7 +4,6 @@ import os
 
 from functools import partial
 from typing import Callable
-from dataclasses import dataclass
 
 from absl import logging
 
@@ -15,12 +14,14 @@ import jax.numpy as jnp
 import jax.random
 import jax.tree_util
 import jax.experimental.host_callback
+import jax.experimental.checkify as checkify
 import optax
 import rlax
 
 from ..math import entropy, discretize_onehot, undiscretize_expected
 from ..utils import pytree
 from ..utils.flax import merge_params
+from ..utils.jax import checkify_method, throws_on_checkify_error
 from ..utils.profiling import timeit
 from ..models.nethack_muzero import NethackPerceiverMuZeroModel
 from ..mcts.muzero import mcts
@@ -74,11 +75,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         afterstate_prediction_fn: Callable = flax.struct.field(pytree_node=False)
         step_index: int = 0
 
-    @dataclass(eq=True, frozen=True)
-    class TrajectoryId(object):
-        env_index: int
-        step: int
-
     def __init__(self, *args, model_factory=NethackPerceiverMuZeroModel, replay_buffer, config=None, **kwargs):
         super(NethackMuZeroAgent, self).__init__(*args, **kwargs)
 
@@ -88,6 +84,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             for i in range(len(self._config['reward_values']))
         }
         self._replay_buffer = replay_buffer
+        self._replay_buffer_state = None
         self._current_train_step = 0
 
         self._build_model(model_factory)
@@ -221,73 +218,46 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             logging.info(f'State will be loaded from checkpoint {checkpoint_path}')
             self._train_state = flax.training.checkpoints.restore_checkpoint(checkpoint_path, self._train_state)
             self._current_train_step = self._train_state.step_index
-            self._replay_buffer.load(
-                os.path.join(path, self._get_replay_buffer_checkpoint_filename_prefix()))
+            # self._replay_buffer.load(
+            #     os.path.join(path, self._get_replay_buffer_checkpoint_filename_prefix()))
             return self._current_train_step
 
     def save_to_checkpoint(self, checkpoint_path):
         self._train_state = self._train_state.replace(step_index=self._current_train_step)
         flax.training.checkpoints.save_checkpoint(
             checkpoint_path, self._train_state, step=self._current_train_step, keep=1, overwrite=True)
-        self._replay_buffer.save(
-            os.path.join(checkpoint_path, self._get_replay_buffer_checkpoint_filename_prefix()))
-        self._remove_old_replay_buffer_checkpoints(checkpoint_path)
+        # self._replay_buffer.save(
+        #     os.path.join(checkpoint_path, self._get_replay_buffer_checkpoint_filename_prefix()))
+        # self._remove_old_replay_buffer_checkpoints(checkpoint_path)
 
-    def _remove_old_replay_buffer_checkpoints(self, checkpoint_path):
-        current_checkpoint_filename_prefix = self._get_replay_buffer_checkpoint_filename_prefix()
-        for checkpoint_filename in os.listdir(checkpoint_path):
-            if checkpoint_filename.startswith('replay_buffer.') and not checkpoint_filename.startswith(
-                    current_checkpoint_filename_prefix):
-                full_checkpoint_filename = os.path.join(checkpoint_path, checkpoint_filename)
-                logging.info(f'Removing old replay buffer checkpoint file {full_checkpoint_filename}')
-                os.remove(full_checkpoint_filename)
-
-    def _get_replay_buffer_checkpoint_filename_prefix(self):
-        return f'replay_buffer.step_{self._current_train_step}'
-
-    @partial(jax.jit, static_argnums=0)
-    def _get_current_batch_stats_jit(self, trajectory_batch):
-        return {
-            'act_avg_mcts_policy_entropy': jnp.mean(
-                jax.vmap(jax.vmap(entropy))(trajectory_batch['act_metadata']['log_mcts_action_probs'])
-            ),
-            'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
-            'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
-        }
+    # def _remove_old_replay_buffer_checkpoints(self, checkpoint_path):
+    #     current_checkpoint_filename_prefix = self._get_replay_buffer_checkpoint_filename_prefix()
+    #     for checkpoint_filename in os.listdir(checkpoint_path):
+    #         if checkpoint_filename.startswith('replay_buffer.') and not checkpoint_filename.startswith(
+    #                 current_checkpoint_filename_prefix):
+    #             full_checkpoint_filename = os.path.join(checkpoint_path, checkpoint_filename)
+    #             logging.info(f'Removing old replay buffer checkpoint file {full_checkpoint_filename}')
+    #             os.remove(full_checkpoint_filename)
+    #
+    # def _get_replay_buffer_checkpoint_filename_prefix(self):
+    #     return f'replay_buffer.step_{self._current_train_step}'
 
     @timeit
     def train_on_batch(self, trajectory_batch):
-        # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
-        # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
-        current_batch_stats = self._get_current_batch_stats_jit(trajectory_batch)
-        self._add_to_replay_buffer(trajectory_batch)
+        if self._replay_buffer_state is None:
+            self._replay_buffer_state = self._init_replay_buffer(trajectory_batch)
 
-        stats = pytree.to_numpy(current_batch_stats)
-
-        if self._current_train_step >= self._config['warmup_days']:
-            stats_per_train_step = []
-            for train_step in range(self._config['num_train_steps']):
-                training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
-                training_stats, per_trajectory_loss_details = self._train(training_batch)
-                train_step_stats = pytree.update(reanalyse_stats, training_stats)
-
-                if self._config['use_priorities']:
-                    self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
-
-                if self._config['update_next_trajectory_memory']:
-                    memory_stats = self._update_next_trajectory_memory(batch_items, training_batch)
-                    train_step_stats = pytree.update(train_step_stats, memory_stats)
-
-                stats_per_train_step.append(train_step_stats)
-
-            stats = pytree.update(stats, pytree.array_mean(stats_per_train_step, result_backend='numpy'))
-
+        self._train_state, self._replay_buffer_state, train_stats = self._train_on_batch_jited_checked(
+            self._current_train_step, self._train_state, self._replay_buffer_state, trajectory_batch,
+            self.next_random_key(),
+        )
         self._current_train_step += 1
-        return stats
+
+        return train_stats
 
     @timeit
     def act_on_batch(self, observation_batch, memory_batch):
-        return self._act_on_batch_jit(
+        return self._act_on_batch_jited(
             observation_batch, memory_batch, self._train_state, self.next_random_key())
 
     def init_memory_batch(self, batch_size):
@@ -302,11 +272,11 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     @timeit
     def update_memory_batch(self, prev_memory, new_memory_state, actions, done):
-        return self._update_memory_batch_jit(self._train_state, new_memory_state, actions, done)
+        return self._update_memory_batch_jited(self._train_state, new_memory_state, actions, done)
 
     @timeit
-    @partial(jax.jit, static_argnums=0)
-    def _update_memory_batch_jit(self, train_state, new_memory_state, actions, done):
+    @partial(jax.jit, static_argnames=('self',))
+    def _update_memory_batch_jited(self, train_state, new_memory_state, actions, done):
         initial_memory_state = train_state.initial_memory_state_fn(train_state.params)
         initial_memory_state = pytree.expand_dims(initial_memory_state, axis=0)  # Add batch dim
         batch_size = new_memory_state.shape[0]
@@ -322,8 +292,56 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'prev_done': done,
         }
 
-    @staticmethod
-    def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
+    def _get_trajectory_batch_stats_jitable(self, trajectory_batch):
+        return {
+            'act_avg_mcts_policy_entropy': jnp.mean(
+                jax.vmap(jax.vmap(entropy))(trajectory_batch['act_metadata']['log_mcts_action_probs'])
+            ),
+            'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
+            'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
+        }
+
+    @timeit
+    @throws_on_checkify_error
+    @partial(jax.jit, static_argnames=('self',))
+    def _train_on_batch_jited_checked(  # TODO: add checkify
+            self, current_train_step, train_state, replay_buffer_state, trajectory_batch, rng):
+        # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
+        # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
+        current_batch_stats = self._get_trajectory_batch_stats_jitable(trajectory_batch)
+        err, replay_buffer_state = checkify_method(self._add_to_replay_buffer_jitable)(
+            current_train_step, replay_buffer_state, trajectory_batch)
+
+        assert self._config['warmup_days'] == 0, 'Support me!'
+
+        def body_fn(loop_state, unused):
+            train_state, replay_buffer_state, rng = loop_state
+
+            rng, make_batch_key, train_step_key = jax.random.split(rng, 3)
+            training_batch, reanalyse_stats = self._make_next_training_batch_jitable(
+                train_state, replay_buffer_state, make_batch_key)
+            train_state, training_stats, per_trajectory_loss_details = self._train_step_jitable(
+                train_state, training_batch, train_step_key)
+            train_step_stats = pytree.update(reanalyse_stats, training_stats)
+
+            # if self._config['use_priorities']:
+            #     self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
+            #
+            # if self._config['update_next_trajectory_memory']:
+            #     memory_stats = self._update_next_trajectory_memory(batch_items, training_batch)
+            #     train_step_stats = pytree.update(train_step_stats, memory_stats)
+
+            return (train_state, replay_buffer_state, rng), train_step_stats
+
+        (train_state, replay_buffer_state, rng), stats_per_train_step = jax.lax.scan(
+            body_fn, init=(train_state, replay_buffer_state, rng), xs=None, length=self._config['num_train_steps'])
+
+        stats = pytree.update(current_batch_stats, pytree.mean(stats_per_train_step))
+
+        return err, (train_state, replay_buffer_state, stats)
+
+    def _represent_trajectory_jitable(
+            self, params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
         """
         Recurrently unrolls the representation function forwards starting from the initial memory state
         to embed the given observation trajectory.
@@ -365,116 +383,111 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return latent_state_trajectory, updated_memory_trajectory
 
-    @timeit
-    def _add_to_replay_buffer(self, trajectory_batch):
-        # Make CPU versions of tensors that might be accessed by the replay buffer
-        rewards_cpu = pytree.to_numpy(trajectory_batch['rewards'])
+    def _init_replay_buffer(self, trajectory_batch):
+        item_prototype = pytree.batch_dim_slice(trajectory_batch, 0)
+        item_prototype = pytree.update(item_prototype, {
+            'env_id': jnp.full((), 0, dtype=jnp.int32),
+            'train_step': jnp.full((), 0, dtype=jnp.int32),
+        })
+        return self._replay_buffer.init_fn(item_prototype)
 
-        batch_size = pytree.get_axis_dim(trajectory_batch, 0)
-        trajectories = jax.jit(pytree.split, static_argnames=['size', 'axis'])(
-            trajectory_batch, batch_size, axis=0)  # Jit makes splitting faster
+    def _add_to_replay_buffer_jitable(self, current_train_step, replay_buffer_state, trajectory_batch):
+        batch_size = pytree.get_axis_dim(trajectory_batch, axis=0)
+        # Add temporal info to trajectories
+        trajectory_batch = pytree.update(trajectory_batch, {
+            'env_id': jnp.arange(batch_size, dtype=jnp.int32),
+            'train_step': jnp.full((batch_size,), current_train_step, dtype=jnp.int32),
+        })
+        return self._replay_buffer.add_batch_fn(replay_buffer_state, trajectory_batch)
 
-        for env_idx in range(batch_size):
-            # Add CPU tensors to each trajectory
-            trajectory = pytree.update(trajectories[env_idx], {
-                'rewards_cpu': rewards_cpu[env_idx],
-            })
+    # @timeit
+    # def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
+    #     # TODO: If switching back to using priorities, think about avoiding device to host copying here
+    #     reward_loss = pytree.to_numpy(trajectory_loss_details['reward_loss'])
+    #     value_loss = pytree.to_numpy(trajectory_loss_details['value_loss'])
+    #     priorities = (
+    #         self._config['reward_loss_priority_weight'] * reward_loss +
+    #         self._config['value_loss_priority_weight'] * value_loss
+    #     )
+    #     for index, item in enumerate(replayed_items):
+    #         self._replay_buffer.update_priority(item.id, priorities[index])
 
-            priority = self._config['initial_priority'] if self._config['use_priorities'] else None
-            self._replay_buffer.add_trajectory(
-                trajectory_id=self.TrajectoryId(env_index=env_idx, step=self._current_train_step),
-                trajectory=trajectory,
-                priority=priority,
-                current_step=self._current_train_step
-            )
+    # @timeit
+    # @partial(jax.jit, static_argnums=0)
+    # def _get_updated_memory_state_after_last_ts_batch_jit(self, trajectory_batch):
+    #     # Make sure terminal states are taken into account when updating memory
+    #     updated_memory_after_last_ts_batch = self.update_memory_batch(
+    #         pytree.timestamp_dim_slice(trajectory_batch['memory_before'], slice_idx=-1),
+    #         pytree.timestamp_dim_slice(trajectory_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
+    #         pytree.timestamp_dim_slice(trajectory_batch['actions'], slice_idx=-1),
+    #         pytree.timestamp_dim_slice(trajectory_batch['done'], slice_idx=-1),
+    #     )
+    #     return updated_memory_after_last_ts_batch['memory']
+    #
+    # @timeit
+    # @partial(jax.jit, static_argnums=0)
+    # def _update_initial_trajectory_memory_jit(self, memories_to_update, update_source_ids, update_source):
+    #     def updater(memory_to_update, update_source_id):
+    #         update = update_source[update_source_id]
+    #         memory_abs_diff = jnp.mean(jnp.abs(memory_to_update[0] - update))
+    #         updated_memory = memory_to_update.at[0].set(update)
+    #         return updated_memory, memory_abs_diff
+    #     updated = jax.tree_map(updater, memories_to_update, update_source_ids)
+    #     updated_memories, memory_abs_diffs = jax.tree_transpose(
+    #         inner_treedef=jax.tree_structure([_ for _ in range(2)]),
+    #         outer_treedef=jax.tree_structure(memories_to_update),
+    #         pytree_to_transpose=updated
+    #     )
+    #     return updated_memories, pytree.array_mean(memory_abs_diffs)
+    #
+    # @timeit
+    # def _update_next_trajectory_memory(self, replayed_items, training_batch):
+    #     """
+    #     Given that we have an updated memory for each trajectory in the batch,
+    #     we can update initial memories of the trajectories that temporally follow the batch
+    #     (provided that they still are in the replay buffer).
+    #     """
+    #     updated_memory_state_after_last_ts_batch = self._get_updated_memory_state_after_last_ts_batch_jit(
+    #         training_batch)
+    #
+    #     items_to_update = []
+    #     memories_to_update = []
+    #     update_source_ids = []
+    #     for batch_index, trajectory_item in enumerate(replayed_items):
+    #         next_trajectory_id = self.TrajectoryId(
+    #             env_index=trajectory_item.id.env_index, step=trajectory_item.id.step + 1)
+    #         next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
+    #         if next_trajectory_item is None:
+    #             # Either this is the freshest trajectory, or the next trajectory
+    #             # has been evicted (this can happen with some replay buffer types, i.e. clustering replay).
+    #             continue
+    #
+    #         items_to_update.append(next_trajectory_item)
+    #         memories_to_update.append(next_trajectory_item.trajectory['memory_before']['memory'])
+    #         update_source_ids.append(batch_index)
+    #
+    #     stats = {}
+    #     if len(memories_to_update) > 0:
+    #         updated_memories, avg_memory_update_abs_diff = self._update_initial_trajectory_memory_jit(
+    #             memories_to_update, update_source_ids, updated_memory_state_after_last_ts_batch)
+    #
+    #         for item, updated_memory in zip(items_to_update, updated_memories):
+    #             item.trajectory['memory_before']['memory'] = updated_memory
+    #
+    #         stats = pytree.update(stats, {
+    #             'avg_memory_update_abs_diff': avg_memory_update_abs_diff
+    #         })
+    #
+    #     return stats
 
-    @timeit
-    def _update_replay_buffer_priorities(self, replayed_items, trajectory_loss_details):
-        # TODO: If switching back to using priorities, think about avoiding device to host copying here
-        reward_loss = pytree.to_numpy(trajectory_loss_details['reward_loss'])
-        value_loss = pytree.to_numpy(trajectory_loss_details['value_loss'])
-        priorities = (
-            self._config['reward_loss_priority_weight'] * reward_loss +
-            self._config['value_loss_priority_weight'] * value_loss
-        )
-        for index, item in enumerate(replayed_items):
-            self._replay_buffer.update_priority(item.id, priorities[index])
-
-    @timeit
-    @partial(jax.jit, static_argnums=0)
-    def _get_updated_memory_state_after_last_ts_batch_jit(self, trajectory_batch):
-        # Make sure terminal states are taken into account when updating memory
-        updated_memory_after_last_ts_batch = self.update_memory_batch(
-            pytree.timestamp_dim_slice(trajectory_batch['memory_before'], slice_idx=-1),
-            pytree.timestamp_dim_slice(trajectory_batch['mcts_reanalyze']['memory_state_after'], slice_idx=-1),
-            pytree.timestamp_dim_slice(trajectory_batch['actions'], slice_idx=-1),
-            pytree.timestamp_dim_slice(trajectory_batch['done'], slice_idx=-1),
-        )
-        return updated_memory_after_last_ts_batch['memory']
-
-    @timeit
-    @partial(jax.jit, static_argnums=0)
-    def _update_initial_trajectory_memory_jit(self, memories_to_update, update_source_ids, update_source):
-        def updater(memory_to_update, update_source_id):
-            update = update_source[update_source_id]
-            memory_abs_diff = jnp.mean(jnp.abs(memory_to_update[0] - update))
-            updated_memory = memory_to_update.at[0].set(update)
-            return updated_memory, memory_abs_diff
-        updated = jax.tree_map(updater, memories_to_update, update_source_ids)
-        updated_memories, memory_abs_diffs = jax.tree_transpose(
-            inner_treedef=jax.tree_structure([_ for _ in range(2)]),
-            outer_treedef=jax.tree_structure(memories_to_update),
-            pytree_to_transpose=updated
-        )
-        return updated_memories, pytree.array_mean(memory_abs_diffs)
-
-    @timeit
-    def _update_next_trajectory_memory(self, replayed_items, training_batch):
-        """
-        Given that we have an updated memory for each trajectory in the batch,
-        we can update initial memories of the trajectories that temporally follow the batch
-        (provided that they still are in the replay buffer).
-        """
-        updated_memory_state_after_last_ts_batch = self._get_updated_memory_state_after_last_ts_batch_jit(
-            training_batch)
-
-        items_to_update = []
-        memories_to_update = []
-        update_source_ids = []
-        for batch_index, trajectory_item in enumerate(replayed_items):
-            next_trajectory_id = self.TrajectoryId(
-                env_index=trajectory_item.id.env_index, step=trajectory_item.id.step + 1)
-            next_trajectory_item = self._replay_buffer.find_trajectory(next_trajectory_id)
-            if next_trajectory_item is None:
-                # Either this is the freshest trajectory, or the next trajectory
-                # has been evicted (this can happen with some replay buffer types, i.e. clustering replay).
-                continue
-
-            items_to_update.append(next_trajectory_item)
-            memories_to_update.append(next_trajectory_item.trajectory['memory_before']['memory'])
-            update_source_ids.append(batch_index)
-
-        stats = {}
-        if len(memories_to_update) > 0:
-            updated_memories, avg_memory_update_abs_diff = self._update_initial_trajectory_memory_jit(
-                memories_to_update, update_source_ids, updated_memory_state_after_last_ts_batch)
-
-            for item, updated_memory in zip(items_to_update, updated_memories):
-                item.trajectory['memory_before']['memory'] = updated_memory
-
-            stats = pytree.update(stats, {
-                'avg_memory_update_abs_diff': avg_memory_update_abs_diff
-            })
-
-        return stats
-
-    def _compute_mcts_statistics(
+    def _compute_mcts_statistics_jitable(
             self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
         batch_size, num_timestamps = jax.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
         rng, represent_trajectory_key = jax.random.split(rng)
         represent_trajectory_key_batch = jax.random.split(represent_trajectory_key, batch_size)
-        represent_trajectory_batch_fn = jax.vmap(self._represent_trajectory, in_axes=(None, 0, 0, None, None, 0))
+        represent_trajectory_batch_fn = jax.vmap(
+            self._represent_trajectory_jitable, in_axes=(None, 0, 0, None, None, 0))
         latent_state_trajectory_batch, updated_memory_trajectory_batch = represent_trajectory_batch_fn(
             train_state.params,
             observation_trajectory_batch, memory_trajectory_batch,
@@ -527,15 +540,15 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         return updated_memory_trajectory_batch, mcts_policy_log_probs, mcts_value, mcts_stats
 
     @timeit
-    @partial(jax.jit, static_argnums=(0,))
-    def _act_on_batch_jit(self, observation_batch, memory_batch, train_state, rng):
+    @partial(jax.jit, static_argnames=('self',))
+    def _act_on_batch_jited(self, observation_batch, memory_batch, train_state, rng):
         mcts_stats_key, action_key = jax.random.split(rng)
 
         # Add fake timestamp dim to make a rudimentary trajectory
         observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1)
         memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1)
 
-        updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
+        updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics_jitable(
             observation_trajectory_batch, memory_trajectory_batch,
             train_state, self._config['act_deterministic'], mcts_stats_key)
 
@@ -555,16 +568,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return selected_actions, act_metadata
 
-    @timeit
-    def _train(self, training_batch):
-        self._train_state, train_stats, per_trajectory_loss_details = self._train_jit(
-            self._train_state, training_batch, self.next_random_key())
-        train_stats = pytree.update(train_stats, self._replay_buffer.get_stats())
-        return train_stats, per_trajectory_loss_details
-
-    @timeit
-    @partial(jax.jit, static_argnums=(0,))
-    def _train_jit(self, train_state, training_batch, rng):
+    def _train_step_jitable(self, train_state, training_batch, rng):
         def loss_function(params, rng):
             def trajectory_loss(params, trajectory, rng):
                 deterministic = self._config['train_deterministic']
@@ -573,7 +577,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
                 # Convert observation trajectory into a sequence of latent states for each timestamp
                 rng, representation_key = jax.random.split(rng)
-                trajectory_latent_states, _ = self._represent_trajectory(
+                trajectory_latent_states, _ = self._represent_trajectory_jitable(
                     params, trajectory['current_state'], trajectory['memory_before'],
                     train_state, deterministic, representation_key)
                 trajectory_latent_states_padded = jnp.concatenate(
@@ -769,33 +773,19 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return train_state, stats, per_trajectory_loss_details
 
-    # TODO: for some reason total execution time of this function
-    # TODO: is 200 ms more than _make_next_training_batch_jit + sample_trajectory_batch
-    @timeit
-    def _make_next_training_batch(self):
-        trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
-        # Get rid of CPU-side copies of tensors before batching
-        trajectories = [
-            pytree.remove_keys(item.trajectory, ['rewards_cpu'])
-            for item in trajectory_batch_items
-        ]
-        trajectory_batch = jax.jit(pytree.stack, static_argnames=['axis'])(trajectories, axis=0)
-
-        training_batch, reanalyse_stats = self._make_next_training_batch_jit(
-            self._train_state, trajectory_batch, self.next_random_key())
-
-        return training_batch, reanalyse_stats, trajectory_batch_items
-
-    @timeit
-    @partial(jax.jit, static_argnums=(0,))
-    def _make_next_training_batch_jit(self, train_state, trajectory_batch, rng):
-        trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze(train_state, trajectory_batch, rng)
-        trajectory_batch_with_training_targets = self._prepare_training_targets(trajectory_batch_with_mcts_stats)
+    def _make_next_training_batch_jitable(self, train_state, replay_buffer_state, rng):
+        sample_key, reanalyze_key = jax.random.split(rng)
+        trajectory_batch = self._replay_buffer.sample_fn(
+            replay_buffer_state, sample_key, self._config['reanalyze_batch_size'])
+        trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze_jitable(
+            train_state, trajectory_batch, reanalyze_key)
+        trajectory_batch_with_training_targets = self._prepare_training_targets_jitable(
+            trajectory_batch_with_mcts_stats)
         return trajectory_batch_with_training_targets, reanalyze_stats
 
-    def _reanalyze(self, train_state, trajectory_batch, rng):
+    def _reanalyze_jitable(self, train_state, trajectory_batch, rng):
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
-        updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
+        updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics_jitable(
             trajectory_batch['current_state'], trajectory_batch['memory_before'],
             train_state, self._config['reanalyze_deterministic'], rng)
         trajectory_batch = pytree.update(trajectory_batch, {
@@ -815,9 +805,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         reanalyze_stats = pytree.update(reanalyze_stats, pytree.mean(mcts_stats))
         return trajectory_batch, reanalyze_stats
 
-    def _prepare_training_targets(self, trajectory_batch):
+    def _prepare_training_targets_jitable(self, trajectory_batch):
         def make_training_trajectory(trajectory):
-            num_timestamps = pytree.get_axis_dim(trajectory, axis=0)
+            num_timestamps = pytree.get_axis_dim(trajectory['actions'], axis=0)
             num_unroll_steps = self._config['num_train_unroll_steps']
             num_actions = self.action_space.n
 
