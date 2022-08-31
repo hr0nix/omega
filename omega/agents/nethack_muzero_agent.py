@@ -247,7 +247,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         if self._replay_buffer_state is None:
             self._replay_buffer_state = self._init_replay_buffer(trajectory_batch)
 
-        self._train_state, self._replay_buffer_state, train_stats = self._train_on_batch_jited_checked(
+        self._train_state, self._replay_buffer_state, train_stats = self._train_on_batch_jited(
             self._current_train_step, self._train_state, self._replay_buffer_state, trajectory_batch,
             self.next_random_key(),
         )
@@ -302,14 +302,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         }
 
     @timeit
-    @throws_on_checkify_error
     @partial(jax.jit, static_argnames=('self',))
-    def _train_on_batch_jited_checked(  # TODO: add checkify
+    def _train_on_batch_jited(  # TODO: add checkify
             self, current_train_step, train_state, replay_buffer_state, trajectory_batch, rng):
         # We always train on reanalysed data, fresh data is just used to fill in the replay buffer
         # Some compute might be wasted on reanalysing fresh data in the early iterations, but we don't care
         current_batch_stats = self._get_trajectory_batch_stats_jitable(trajectory_batch)
-        err, replay_buffer_state = checkify_method(self._add_to_replay_buffer_jitable)(
+        # TODO: ignore error for now
+        _, replay_buffer_state = checkify_method(self._add_to_replay_buffer_jitable)(
             current_train_step, replay_buffer_state, trajectory_batch)
 
         assert self._config['warmup_days'] == 0, 'Support me!'
@@ -338,7 +338,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         stats = pytree.update(current_batch_stats, pytree.mean(stats_per_train_step))
 
-        return err, (train_state, replay_buffer_state, stats)
+        return train_state, replay_buffer_state, stats
 
     def _represent_trajectory_jitable(
             self, params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
@@ -775,8 +775,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _make_next_training_batch_jitable(self, train_state, replay_buffer_state, rng):
         sample_key, reanalyze_key = jax.random.split(rng)
-        trajectory_batch = self._replay_buffer.sample_fn(
-            replay_buffer_state, sample_key, self._config['reanalyze_batch_size'])
+        # TODO: this workaround is needed because batch size is being traced for some reason
+        @checkify.checkify
+        def _do_sample(replay_buffer_state, sample_key):
+            return self._replay_buffer.sample_fn(
+                replay_buffer_state, sample_key, self._config['reanalyze_batch_size'])
+        # TODO: ignore error for now
+        _, trajectory_batch = _do_sample(replay_buffer_state, sample_key)
         trajectory_batch_with_mcts_stats, reanalyze_stats = self._reanalyze_jitable(
             train_state, trajectory_batch, reanalyze_key)
         trajectory_batch_with_training_targets = self._prepare_training_targets_jitable(
