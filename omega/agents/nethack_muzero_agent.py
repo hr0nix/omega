@@ -6,7 +6,7 @@ import os
 
 from functools import partial
 from typing import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from absl import logging
 
@@ -20,7 +20,6 @@ import jax.experimental.host_callback
 import jax.experimental.checkify as checkify
 import rlax
 import optax
-#import optax_adan
 
 from ..math.probability import entropy, cross_entropy
 from ..utils import pytree
@@ -34,45 +33,54 @@ from .trainable_agent import JaxTrainableAgentBase
 
 
 class NethackMuZeroAgent(JaxTrainableAgentBase):
-    CONFIG = flax.core.frozen_dict.FrozenDict({
-        'lr': 1e-3,
-        'use_adaptive_lr': False,
-        'num_lr_warmup_steps': 0,
-        'weight_decay': 0.0,
-        'discount_factor': 0.99,
-        'model_config': {},
-        'num_mcts_simulations': 30,
-        'mcts_puct_c1': 1.25,
-        'mcts_dirichlet_noise_alpha': 0.2,
-        'mcts_root_exploration_fraction': 0.2,
-        'mcts_search_policy': 'puct',
-        'mcts_result_policy': 'visit_count',
-        'num_train_unroll_steps': 5,
-        'num_train_steps': 1,
-        'reanalyze_batch_size': 8,
-        'warmup_days': 0,
-        'value_reward_bins': 64,
-        'value_reward_min_max': (-1.0, 1.0),
-        'mcts_reward_ensemble_size': 1,
-        'mcts_value_ensemble_size': 1,
-        'chance_outcome_commitment_loss_weight': 50.0,
-        'chance_outcome_prediction_loss_weight': 1.0,
-        'policy_loss_weight': 1.0,
-        'value_loss_weight': 1.0,
-        'afterstate_value_loss_weight': 1.0,
-        'reward_loss_weight': 10.0,
-        'state_similarity_loss_weight': 0.001,
-        'state_similarity_loss_stop_gradient': False,
-        'max_gradient_norm': 1000.0,
-        'act_deterministic': False,
-        'reanalyze_deterministic': False,
-        'train_deterministic': False,
-        'reward_loss_priority_weight': 1.0,
-        'value_loss_priority_weight': 1.0,
-        'initial_priority': 1.0,
-        'use_priorities': False,
-        'update_next_trajectory_memory': False,
-    })
+    @dataclass(frozen=True)
+    class Config:
+        lr: float = 0.001
+        use_adaptive_lr: bool = False
+        num_lr_warmup_steps: int = 0
+        weight_decay: float = 0.0
+        max_gradient_norm: float = 1000.0
+
+        discount_factor: float = 0.99
+
+        model_config: dict = field(default_factory=dict)
+
+        num_mcts_simulations: int = 30
+        mcts_puct_c1: float = 1.25
+        mcts_dirichlet_noise_alpha: float = 0.2
+        mcts_root_exploration_fraction: float = 0.2
+        mcts_search_policy: str = 'puct'
+        mcts_result_policy: str = 'visit_count'
+
+        num_train_unroll_steps: int = 5
+        num_train_steps: int = 1
+        reanalyze_batch_size: int = 8
+        warmup_days: int = 0
+
+        value_reward_bins: int = 64
+        value_reward_min_max: tuple[float] = (-1.0, 1.0)
+        mcts_reward_ensemble_size: int = 1
+        mcts_value_ensemble_size: int = 1
+
+        chance_outcome_commitment_loss_weight: float = 50.0
+        chance_outcome_prediction_loss_weight: float = 1.0
+        policy_loss_weight: float = 1.0
+        value_loss_weight: float = 1.0
+        afterstate_value_loss_weight: float = 1.0
+        reward_loss_weight: float = 10.0
+        state_similarity_loss_weight: float = 0.001
+        state_similarity_loss_stop_gradient: bool = False
+
+        act_deterministic: bool = False
+        reanalyze_deterministic: bool = False
+        train_deterministic: bool = False
+
+        use_priorities: bool = False
+        reward_loss_priority_weight: float = 1.0
+        value_loss_priority_weight: float = 1.0
+        initial_priority: float = 1.0
+
+        update_next_trajectory_memory: bool = False
 
     class TrainState(flax.training.train_state.TrainState):
         initial_memory_state_fn: Callable = flax.struct.field(pytree_node=False)
@@ -92,14 +100,14 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
     def __init__(self, *args, model_factory=NethackPerceiverMuZeroModel, replay_buffer, config=None, **kwargs):
         super(NethackMuZeroAgent, self).__init__(*args, **kwargs)
 
-        self._config = self.CONFIG.copy(config or {})
+        self._config = self.Config(**(config or {}))
         self._replay_buffer = replay_buffer
         self._current_train_step = 0
 
         self._value_reward_transform_pair = make_value_reward_transform_pair(
-            min_value=self._config['value_reward_min_max'][0],
-            max_value=self._config['value_reward_min_max'][1],
-            num_bins=self._config['value_reward_bins'],
+            min_value=self._config.value_reward_min_max[0],
+            max_value=self._config.value_reward_min_max[1],
+            num_bins=self._config.value_reward_bins,
         )
 
         self._build_model(model_factory)
@@ -142,8 +150,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     def _build_model(self, model_factory):
         self._model = model_factory(
-            num_actions=self.action_space.n, value_reward_dim=self._config['value_reward_bins'], name='muzero_model',
-            **self._config['model_config'])
+            num_actions=self.action_space.n, value_reward_dim=self._config.value_reward_bins, name='muzero_model',
+            **self._config.model_config)
         model_params = self._init_model_params()
         optimizer = self._make_optimizer()
         self._train_state = self.TrainState.create(
@@ -167,23 +175,22 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         )
 
     def _make_optimizer(self):
-        lr = self._config['lr']
-        if self._config['use_adaptive_lr']:
-            lr *= math.sqrt(self._config['reanalyze_batch_size'])
+        lr = self._config.lr
+        if self._config.use_adaptive_lr:
+            lr *= math.sqrt(self._config.reanalyze_batch_size)
             logging.info(f'Using adaptive learning rate: {lr}')
 
         lr_schedules = [
-            optax.linear_schedule(init_value=0.0, end_value=lr, transition_steps=self._config['num_lr_warmup_steps']),
+            optax.linear_schedule(init_value=0.0, end_value=lr, transition_steps=self._config.num_lr_warmup_steps),
             optax.constant_schedule(lr),
         ]
         lr_schedule = optax.join_schedules(
-            schedules=lr_schedules, boundaries=[self._config['num_lr_warmup_steps']]
+            schedules=lr_schedules, boundaries=[self._config.num_lr_warmup_steps]
         )
 
         return optax.chain(
-            optax.clip_by_global_norm(self._config['max_gradient_norm']),
-            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config['weight_decay']),
-            #optax_adan.adan(learning_rate=lr_schedule),
+            optax.clip_by_global_norm(self._config.max_gradient_norm),
+            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config.weight_decay),
         )
 
     def _make_fake_observation(self):
@@ -278,17 +285,17 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         stats = pytree.to_numpy(current_batch_stats)
 
-        if self._current_train_step >= self._config['warmup_days']:
+        if self._current_train_step >= self._config.warmup_days:
             stats_per_train_step = []
-            for train_step in range(self._config['num_train_steps']):
+            for train_step in range(self._config.num_train_steps):
                 training_batch, reanalyse_stats, batch_items = self._make_next_training_batch()
                 training_stats, per_trajectory_loss_details = self._train(training_batch)
                 train_step_stats = pytree.update(reanalyse_stats, training_stats)
 
-                if self._config['use_priorities']:
+                if self._config.use_priorities:
                     self._update_replay_buffer_priorities(batch_items, per_trajectory_loss_details)
 
-                if self._config['update_next_trajectory_memory']:
+                if self._config.update_next_trajectory_memory:
                     memory_stats = self._update_next_trajectory_memory(batch_items, training_batch)
                     train_step_stats = pytree.update(train_step_stats, memory_stats)
 
@@ -396,7 +403,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 'rewards_cpu': rewards_cpu[env_idx],
             })
 
-            priority = self._config['initial_priority'] if self._config['use_priorities'] else None
+            priority = self._config.initial_priority if self._config.use_priorities else None
             self._replay_buffer.add_trajectory(
                 trajectory_id=self.TrajectoryId(env_index=env_idx, step=self._current_train_step),
                 trajectory=trajectory,
@@ -410,8 +417,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         reward_loss = pytree.to_numpy(trajectory_loss_details['reward_loss'])
         value_loss = pytree.to_numpy(trajectory_loss_details['value_loss'])
         priorities = (
-            self._config['reward_loss_priority_weight'] * reward_loss +
-            self._config['value_loss_priority_weight'] * value_loss
+            self._config.reward_loss_priority_weight * reward_loss +
+            self._config.value_loss_priority_weight * value_loss
         )
         for index, item in enumerate(replayed_items):
             self._replay_buffer.update_priority(item.id, priorities[index])
@@ -504,7 +511,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def prediction_fn(state, rng):
             log_action_probs, log_value_probs = train_state.prediction_fn(
                 train_state.params, state,
-                ensemble_size=self._config['mcts_value_ensemble_size'],
+                ensemble_size=self._config.mcts_value_ensemble_size,
                 deterministic=deterministic, rngs={'dropout': rng})
             value_probs = jnp.exp(log_value_probs)
             return log_action_probs, self._value_reward_transform_pair.apply_inv(value_probs)
@@ -512,7 +519,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def afterstate_prediction_fn(afterstate, rng):
             log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
                 train_state.params, afterstate,
-                ensemble_size=self._config['mcts_value_ensemble_size'],
+                ensemble_size=self._config.mcts_value_ensemble_size,
                 deterministic=deterministic, rngs={'dropout': rng})
             afterstate_value_probs = jnp.exp(log_afterstate_value_probs)
             return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(afterstate_value_probs)
@@ -520,7 +527,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         def dynamics_fn(afterstate, chance_outcome, rng):
             next_state, log_reward_probs = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome,
-                ensemble_size=self._config['mcts_reward_ensemble_size'],
+                ensemble_size=self._config.mcts_reward_ensemble_size,
                 deterministic=deterministic, rngs={'dropout': rng})
             reward_probs = jnp.exp(log_reward_probs)
             return next_state, self._value_reward_transform_pair.apply_inv(reward_probs)
@@ -540,13 +547,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             afterstate_dynamics_fn=afterstate_dynamics_fn,
             # The meaning of discount factor is different for Stochastic MuZero MCTS because
             # every transition is split into a transition to the afterstate and a transition to the next state.
-            discount_factor=math.sqrt(self._config['discount_factor']),
-            num_simulations=self._config['num_mcts_simulations'],
-            puct_c1=self._config['mcts_puct_c1'],
-            dirichlet_noise_alpha=self._config['mcts_dirichlet_noise_alpha'],
-            root_exploration_fraction=self._config['mcts_root_exploration_fraction'],
-            search_policy=self._config['mcts_search_policy'],
-            result_policy=self._config['mcts_result_policy'],
+            discount_factor=math.sqrt(self._config.discount_factor),
+            num_simulations=self._config.num_mcts_simulations,
+            puct_c1=self._config.mcts_puct_c1,
+            dirichlet_noise_alpha=self._config.mcts_dirichlet_noise_alpha,
+            root_exploration_fraction=self._config.mcts_root_exploration_fraction,
+            search_policy=self._config.mcts_search_policy,
+            result_policy=self._config.mcts_result_policy,
         )
         trajectory_mcts = jax.vmap(mcts_func)
         trajectory_batch_mcts = jax.vmap(trajectory_mcts)
@@ -569,7 +576,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
             observation_trajectory_batch, memory_trajectory_batch,
-            train_state, self._config['act_deterministic'], mcts_stats_key)
+            train_state, self._config.act_deterministic, mcts_stats_key)
 
         # Get rid of the fake timestamp dimension that we've added before
         mcts_policy_log_probs = pytree.squeeze(mcts_policy_log_probs, axis=1)
@@ -604,9 +611,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         def loss_function(params, rng):
             def trajectory_loss(params, trajectory, rng):
-                deterministic = self._config['train_deterministic']
+                deterministic = self._config.train_deterministic
 
-                num_unroll_steps = self._config['num_train_unroll_steps']
+                num_unroll_steps = self._config.num_train_unroll_steps
 
                 # Convert observation trajectory into a sequence of latent states for each timestamp
                 rng, representation_key = jax.random.split(rng)
@@ -660,7 +667,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     reward_targets = trajectory['training_targets']['reward_discrete'][:, unroll_step]
                     policy_targets = trajectory['training_targets']['policy'][:, unroll_step]
                     state_targets = trajectory_latent_states_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
-                    if self._config['state_similarity_loss_stop_gradient']:
+                    if self._config.state_similarity_loss_stop_gradient:
                         state_targets = jax.lax.stop_gradient(state_targets)
                     chance_outcome_one_hot_targets = chance_outcomes_one_hot_padded[unroll_step + 1: unroll_step + 1 + num_timestamps]
                     # When there's no next state in trajectory due to termination,
@@ -789,13 +796,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 reward_l2_loss /= num_unroll_steps
                 # end of TODO
                 loss = (
-                    self._config['afterstate_value_loss_weight'] * afterstate_value_loss +
-                    self._config['value_loss_weight'] * state_value_loss +
-                    self._config['reward_loss_weight'] * reward_loss +
-                    self._config['policy_loss_weight'] * policy_loss +
-                    self._config['chance_outcome_prediction_loss_weight'] * chance_outcome_prediction_loss +
-                    self._config['chance_outcome_commitment_loss_weight'] * chance_outcome_commitment_loss +
-                    self._config['state_similarity_loss_weight'] * state_similarity_loss
+                    self._config.afterstate_value_loss_weight * afterstate_value_loss +
+                    self._config.value_loss_weight * state_value_loss +
+                    self._config.reward_loss_weight * reward_loss +
+                    self._config.policy_loss_weight * policy_loss +
+                    self._config.chance_outcome_prediction_loss_weight * chance_outcome_prediction_loss +
+                    self._config.chance_outcome_commitment_loss_weight * chance_outcome_commitment_loss +
+                    self._config.state_similarity_loss_weight * state_similarity_loss
                 )
 
                 return loss, {
@@ -836,7 +843,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         Samples a new batch of trajectories from the replay buffer, reanalyzes it and pre-computes training targets.
         """
-        trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config['reanalyze_batch_size'])
+        trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config.reanalyze_batch_size)
         # Get rid of CPU-side copies of tensors before batching
         trajectories = [
             pytree.remove_keys(item.trajectory, ['rewards_cpu'])
@@ -869,7 +876,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
         updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
             trajectory_batch['current_state'], trajectory_batch['memory_before'],
-            train_state, self._config['reanalyze_deterministic'], rng)
+            train_state, self._config.reanalyze_deterministic, rng)
         trajectory_batch = pytree.update(trajectory_batch, {
             'mcts_reanalyze': {
                 'log_action_probs': mcts_policy_log_probs,
@@ -894,7 +901,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         def make_training_trajectory(trajectory):
             targets = compute_training_targets(
-                trajectory, self._config['num_train_unroll_steps'], self._config['discount_factor'])
+                trajectory, self._config.num_train_unroll_steps, self._config.discount_factor)
             targets = pytree.update(targets, compute_one_hot_targets(targets, self._value_reward_transform_pair.apply))
             return pytree.update(trajectory, {
                 'training_targets': targets,
