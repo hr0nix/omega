@@ -5,7 +5,7 @@ import math
 import os
 
 from functools import partial
-from typing import Callable
+from typing import Callable, Tuple
 from dataclasses import dataclass, field
 
 from absl import logging
@@ -58,7 +58,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         warmup_days: int = 0
 
         value_reward_bins: int = 64
-        value_reward_min_max: tuple[float] = (-1.0, 1.0)
+        value_reward_min_max: Tuple[float, float] = (-1.0, 1.0)
         mcts_reward_ensemble_size: int = 1
         mcts_value_ensemble_size: int = 1
 
