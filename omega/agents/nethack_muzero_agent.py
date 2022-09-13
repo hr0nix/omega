@@ -603,7 +603,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
     @timeit
     @throws_on_checkify_error
-    @partial(jax.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0, donate_argnums=1)
     @checkify_method
     def _train_jit(self, train_state, training_batch, rng):
         """
