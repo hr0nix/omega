@@ -22,6 +22,7 @@ agent_config:
   update_next_trajectory_memory: true
   lr: 0.000075
   use_adaptive_lr: true
+  no_weight_decay_layers: ['bias']
   discount_factor: 0.999
   num_train_steps: 1
   num_train_unroll_steps: 2

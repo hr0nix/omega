@@ -5,7 +5,7 @@ import math
 import os
 
 from functools import partial
-from typing import Callable, Tuple
+from typing import Callable, Tuple, List
 from dataclasses import dataclass, field
 
 from absl import logging
@@ -40,6 +40,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         num_lr_warmup_steps: int = 0
         weight_decay: float = 0.0
         max_gradient_norm: float = 1000.0
+        no_weight_decay_layers: List[str] = field(default_factory=list)
 
         discount_factor: float = 0.99
 
@@ -153,7 +154,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             num_actions=self.action_space.n, value_reward_dim=self._config.value_reward_bins, name='muzero_model',
             **self._config.model_config)
         model_params = self._init_model_params()
-        optimizer = self._make_optimizer()
+        optimizer = self._make_optimizer(model_params)
         self._train_state = self.TrainState.create(
             params=model_params,
             tx=optimizer,
@@ -174,7 +175,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 self._model.apply, method=self._model.afterstate_prediction),
         )
 
-    def _make_optimizer(self):
+    def _make_optimizer(self, model_params):
         lr = self._config.lr
         if self._config.use_adaptive_lr:
             lr *= math.sqrt(self._config.reanalyze_batch_size)
@@ -188,9 +189,19 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             schedules=lr_schedules, boundaries=[self._config.num_lr_warmup_steps]
         )
 
+        weight_decay_traversal = flax.traverse_util.ModelParamTraversal(
+            lambda name, _: all(filtered_name not in name for filtered_name in self._config.no_weight_decay_layers)
+        )
+        all_false = jax.tree_util.tree_map(lambda _: False, model_params)
+        weight_decay_mask = weight_decay_traversal.update(lambda _: True, all_false)
+
         return optax.chain(
             optax.clip_by_global_norm(self._config.max_gradient_norm),
-            optax.adamw(learning_rate=lr_schedule, weight_decay=self._config.weight_decay),
+            optax.adamw(
+                learning_rate=lr_schedule,
+                weight_decay=self._config.weight_decay,
+                mask=weight_decay_mask,
+            ),
         )
 
     def _make_fake_observation(self):
