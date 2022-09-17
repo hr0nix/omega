@@ -8,10 +8,10 @@ from omega.utils.gym import StayInTerminalStateWrapper, AutoResetWrapper
 import numpy as np
 
 
-ENV_NAME = 'MiniHack-Retreat-v0'
+ENV_NAME = 'MiniHack-ExploreRooms-Easy-v0'
 NUM_STEPS = 50
 GLYPH_CROP_START = [0, 0]
-GLYPH_CROP_AREA = [10, 10]
+GLYPH_CROP_AREA = [15, 25]
 
 
 def generate_random_action(env):

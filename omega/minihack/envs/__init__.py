@@ -3,3 +3,4 @@ from .memory_test import *
 from .avoid_fuzzy_bear import *
 from .retreat import *
 from .mazewalk import *
+from .explore_rooms import *
