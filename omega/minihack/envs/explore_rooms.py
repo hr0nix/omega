@@ -22,7 +22,23 @@ class ExploreRoomsEasy(ExploreRoomsBase):
         )
 
 
+class ExploreRoomsMedium(ExploreRoomsBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            *args,
+            des_file=os.path.join(DES_PATH, 'explore_rooms_medium.des'),
+            max_episode_steps=200,
+            **kwargs
+        )
+
+
 register(
     id="MiniHack-ExploreRooms-Easy-v0",
     entry_point="omega.minihack.envs:ExploreRoomsEasy",
+)
+
+
+register(
+    id="MiniHack-ExploreRooms-Medium-v0",
+    entry_point="omega.minihack.envs:ExploreRoomsMedium",
 )
