@@ -27,6 +27,11 @@ class MiniHackRoom14x14Random(MiniHackRoom):
         super().__init__(*args, size=14, random=True, **kwargs)
 
 
+class MiniHackRoom15x15ShortEpisode(MiniHackRoom):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, size=15, max_episode_steps=18, random=False, **kwargs)
+
+
 register(
     id="MiniHack-Room-Random-7x7-v0",
     entry_point="omega.minihack.envs:MiniHackRoom7x7Random",
@@ -50,7 +55,14 @@ register(
     entry_point="omega.minihack.envs:MiniHackRoom13x13Random",
 )
 
+
 register(
     id="MiniHack-Room-Random-14x14-v0",
     entry_point="omega.minihack.envs:MiniHackRoom14x14Random",
+)
+
+
+register(
+    id="MiniHack-Room-ShortEpisode-15x15-v0",
+    entry_point="omega.minihack.envs:MiniHackRoom15x15ShortEpisode",
 )
