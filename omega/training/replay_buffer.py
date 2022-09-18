@@ -130,7 +130,7 @@ class FIFOReplayBuffer(ReplayBuffer):
     def sample_trajectory_batch(self, batch_size):
         random_indices = np.random.randint(low=0, high=len(self._buffer), size=batch_size)
         random_trajectories = [self._buffer[i] for i in random_indices]
-        return random_trajectories
+        return random_trajectories, np.ones(batch_size)
 
     @property
     def size(self):
@@ -179,7 +179,7 @@ class MaxAgeReplayBuffer(ReplayBuffer):
     def sample_trajectory_batch(self, batch_size):
         random_indices = np.random.randint(low=0, high=len(self._buffer), size=batch_size)
         random_trajectories = [self._buffer[i] for i in random_indices]
-        return random_trajectories
+        return random_trajectories, np.ones(batch_size)
 
     @property
     def size(self):
@@ -230,9 +230,9 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
     @timeit
     def sample_trajectory_batch(self, batch_size):
-        random_trajectories = self._sampler.sample(num_items=batch_size)
+        random_trajectories, weights = self._sampler.sample(num_items=batch_size)
         self._update_stats(random_trajectories)
-        return random_trajectories
+        return random_trajectories, weights
 
     def update_priority(self, trajectory_id, priority):
         self._validate_priority(priority)
@@ -319,13 +319,20 @@ class ClusteringReplayBuffer(ReplayBuffer):
     @timeit
     def sample_trajectory_batch(self, batch_size):
         self._last_num_samples = self._compute_num_samples_per_cluster(batch_size)
-        random_trajectories = [
-            trajectory
+        samples_per_cluster = [
+            self._buffers[cluster_id].sample_trajectory_batch(self._last_num_samples[cluster_id])
             for cluster_id in range(len(self._buffers))
-            for trajectory in self._buffers[cluster_id].sample_trajectory_batch(self._last_num_samples[cluster_id])
-            if self._last_num_samples[cluster_id] > 0
         ]
-        return random_trajectories
+        random_trajectories = [
+            t for cluster_id in range(len(self._buffers)) for t in samples_per_cluster[cluster_id][0]
+        ]
+        importance_weights = np.array([
+            w * self._buffers[cluster_id].size / self.size
+            for cluster_id in range(len(self._buffers)) for w in samples_per_cluster[cluster_id][1]
+        ], dtype=np.float32)
+        importance_weights = importance_weights / np.sum(importance_weights) * batch_size
+
+        return random_trajectories, importance_weights
 
     def _get_trajectory_cluster(self, trajectory):
         cluster_id = self._clustering_fn(trajectory)

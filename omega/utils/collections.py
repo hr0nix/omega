@@ -106,7 +106,12 @@ class LinearPrioritizedSampler(PrioritizedSamplerBase):
         probs /= np.sum(probs)
 
         chosen_indices = np.random.choice(a=num_candidates, size=num_items, p=probs)
-        return [
+        samples = [
             self._index_to_item[index]
             for index in chosen_indices
         ]
+        importance_weights = np.power(probs[chosen_indices], -1.0)
+        importance_weights /= np.sum(importance_weights)
+        importance_weights *= num_items
+
+        return samples, importance_weights

@@ -1,15 +1,22 @@
+import pytest
+
 from omega.utils.collections import LinearPrioritizedSampler
 
 
 def assert_sampling_probs(sampler, expected_item_to_prob, num_samples=10000, eps=1e-2):
-    items = sampler.sample(num_items=num_samples)
+    items, weights = sampler.sample(num_items=num_samples)
     actual_item_to_freq = {}
-    for item in items:
-        actual_item_to_freq[item] = actual_item_to_freq.get(item, 0) + 1
+    actual_item_to_weight = {}
+    for i in range(len(items)):
+        actual_item_to_freq[items[i]] = actual_item_to_freq.get(items[i], 0) + 1
+        actual_item_to_weight[items[i]] = actual_item_to_weight.get(items[i], 0) + weights[i]
 
     for item, expected_prob in expected_item_to_prob.items():
         actual_prob = actual_item_to_freq.get(item, 0) / num_samples
-        assert abs(expected_prob - actual_prob) < eps
+        actual_weight = actual_item_to_weight.get(item, 0)
+        assert actual_prob == pytest.approx(expected_prob, abs=eps)
+        # Importance weights should be equally balanced between all items
+        assert actual_weight / num_samples == pytest.approx(1.0 / len(expected_item_to_prob), abs=eps)
 
 
 def test_linear_sampler_add():

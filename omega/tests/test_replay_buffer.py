@@ -3,8 +3,26 @@ import pytest  # noqa
 import jax.numpy as jnp
 import numpy as np
 
-from omega.training.replay_buffer import ReplayBufferStorage, ReplayBufferItem
+from omega.training.replay_buffer import ReplayBufferStorage, ReplayBufferItem, ClusteringReplayBuffer, FIFOReplayBuffer
 from omega.utils import pytree
+
+
+def test_clustering_replay_sampling():
+    buffer = ClusteringReplayBuffer(
+        cluster_buffer_fn=lambda: FIFOReplayBuffer(buffer_size=3),
+        num_clusters=2,
+        clustering_fn=lambda item: 1 if item > 0 else 0
+    )
+    # 1 trajectory in the first cluster, 3 in the second
+    for trajectory_id in range(4):
+        buffer.add_trajectory(trajectory_id, trajectory_id)
+
+    trajectories, weights = buffer.sample_trajectory_batch(4)
+    for i in range(4):
+        if trajectories[i].trajectory == 0:
+            assert weights[i] == 0.5  # 2 trajectories in cluster 0 contribute 1/4
+        else:
+            assert weights[i] == 1.5  # 2 trajectories in cluster 1 contribute 3/4
 
 
 def test_replay_buffer_storage_serialization(tmp_path):

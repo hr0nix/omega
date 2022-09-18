@@ -19,6 +19,7 @@ train_config:
     distribution_power: 0.5
 agent_config:
   use_priorities: false
+  use_importance_weights: true
   update_next_trajectory_memory: true
   lr: 0.000075
   use_adaptive_lr: true

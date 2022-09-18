@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from absl import logging
 
+import numpy as np
 import flax.struct
 import flax.training.train_state
 import flax.training.checkpoints
@@ -76,6 +77,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         reanalyze_deterministic: bool = False
         train_deterministic: bool = False
 
+        use_importance_weights: bool = False
         use_priorities: bool = False
         reward_loss_priority_weight: float = 1.0
         value_loss_priority_weight: float = 1.0
@@ -806,7 +808,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 state_value_l2_loss /= num_unroll_steps
                 reward_l2_loss /= num_unroll_steps
                 # end of TODO
-                loss = (
+                loss = trajectory['importance_weights'] * (
                     self._config.afterstate_value_loss_weight * afterstate_value_loss +
                     self._config.value_loss_weight * state_value_loss +
                     self._config.reward_loss_weight * reward_loss +
@@ -854,13 +856,24 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         Samples a new batch of trajectories from the replay buffer, reanalyzes it and pre-computes training targets.
         """
-        trajectory_batch_items = self._replay_buffer.sample_trajectory_batch(self._config.reanalyze_batch_size)
+        trajectory_batch_items, importance_weights = self._replay_buffer.sample_trajectory_batch(
+            self._config.reanalyze_batch_size)
         # Get rid of CPU-side copies of tensors before batching
         trajectories = [
             pytree.remove_keys(item.trajectory, ['rewards_cpu'])
             for item in trajectory_batch_items
         ]
         trajectory_batch = jax.jit(pytree.stack, static_argnames=['axis'])(trajectories, axis=0)
+
+        # Add importance weights to batch
+        if self._config.use_importance_weights:
+            assert np.allclose(np.sum(importance_weights), len(trajectory_batch_items))
+            importance_weights = jnp.asarray(importance_weights)
+        else:
+            importance_weights = jnp.ones_like(importance_weights)
+        trajectory_batch = pytree.update(trajectory_batch, {
+            'importance_weights': importance_weights,
+        })
 
         training_batch, reanalyse_stats = self._make_next_training_batch_jit(
             self._train_state, trajectory_batch, self.next_random_key())
