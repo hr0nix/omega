@@ -27,6 +27,11 @@ def get_state_value(tree, node_index):
     return tree['value_sum'][node_index] / (tree['num_visits'][node_index] + 1e-10)
 
 
+def get_avg_reward_optimism(tree, node_index):
+    # Add eps to work around num_visits=0
+    return tree['reward_optimism_sum'][node_index] / (tree['num_visits'][node_index] + 1e-10)
+
+
 def deterministic_sampling(probs, visit_counts):
     # As proposed in "Policy improvement by planning with Gumbel", https://openreview.net/forum?id=bERaNdoegnO
     chex.assert_equal_shape([probs, visit_counts])
@@ -148,7 +153,7 @@ def get_pi_bar_policy(tree, node_index, c1):
 
 
 def init_node(
-        tree, node_index, is_chance, state, reward, value,
+        tree, node_index, is_chance, state, reward, reward_optimism, value,
         action_prior_log_probs, chance_outcome_prior_log_probs,
         rng, dirichlet_noise_alpha, exploration_fraction):
     rng, noise_key = jax.random.split(rng)
@@ -167,6 +172,7 @@ def init_node(
     tree['value_sum'] = tree['value_sum'].at[node_index].set(value)
     tree['num_visits'] = tree['num_visits'].at[node_index].set(1)
     tree['reward'] = tree['reward'].at[node_index].set(reward)
+    tree['reward_optimism_sum'] = tree['reward_optimism_sum'].at[node_index].set(reward_optimism)
     tree['state'] = tree['state'].at[node_index].set(state)
     tree['chance_outcome_prior_probs'] = tree['chance_outcome_prior_probs'].at[node_index].set(
         chance_outcome_prior_probs)
@@ -202,6 +208,7 @@ def make_tree(
         'predicted_value': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'value_sum': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'reward': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
+        'reward_optimism_sum': jnp.zeros(tree_nodes_max_num, dtype=jnp.float32),
         'action_prior_probs': jnp.zeros((tree_nodes_max_num, num_actions), dtype=jnp.float32),
         'chance_outcome_prior_probs': jnp.zeros((tree_nodes_max_num, num_chance_outcomes), dtype=jnp.float32),
         'state': jnp.zeros((tree_nodes_max_num,) + initial_state.shape, dtype=jnp.float32),
@@ -213,7 +220,7 @@ def make_tree(
 
     return init_node(
         tree=tree, node_index=0, is_chance=False,
-        state=initial_state, reward=0.0, value=root_value,
+        state=initial_state, reward=0.0, reward_optimism=0.0, value=root_value,
         action_prior_log_probs=action_log_probs,
         chance_outcome_prior_log_probs=jnp.zeros(num_chance_outcomes, dtype=jnp.float32),
         rng=rng,
@@ -295,6 +302,7 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     child_state = jnp.zeros_like(parent_state)
     reward = 0.0
     value = 0.0
+    reward_optimism = 0.0
     action_log_probs = jnp.zeros(get_num_actions(tree), dtype=jnp.float32)
     chance_outcome_log_probs = jnp.zeros(get_num_chance_outcomes(tree), dtype=jnp.float32)
 
@@ -305,13 +313,13 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     def chance_node_expansion(_):
         num_chance_outcomes = get_num_chance_outcomes(tree)
         chance_outcome_one_hot = jax.nn.one_hot(local_child_index, num_classes=num_chance_outcomes, dtype=jnp.float32)
-        child_state, reward = dynamics_fn(parent_state, chance_outcome_one_hot, expansion_dynamics_key)
+        child_state, reward, reward_optimism = dynamics_fn(parent_state, chance_outcome_one_hot, expansion_dynamics_key)
         action_log_probs, value = prediction_fn(child_state, expansion_prediction_key)
-        return child_state, reward, value, action_log_probs, False
+        return child_state, reward, reward_optimism, value, action_log_probs, False
 
-    child_state, reward, value, action_log_probs, _ = jax.lax.while_loop(
+    child_state, reward, reward_optimism, value, action_log_probs, _ = jax.lax.while_loop(
         cond_fun=chance_node_expansion_cond, body_fun=chance_node_expansion,
-        init_val=(child_state, reward, value, action_log_probs, True)
+        init_val=(child_state, reward, reward_optimism, value, action_log_probs, True)
     )
 
     def regular_node_expansion_cond(loop_state):
@@ -329,7 +337,8 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
     )
 
     return init_node(
-        tree, node_index, is_chance=jnp.logical_not(parent_is_chance), state=child_state, value=value, reward=reward,
+        tree, node_index, is_chance=jnp.logical_not(parent_is_chance), state=child_state,
+        value=value, reward=reward, reward_optimism=reward_optimism,
         action_prior_log_probs=action_log_probs, chance_outcome_prior_log_probs=chance_outcome_log_probs,
         rng=init_node_key,
         dirichlet_noise_alpha=1.0, exploration_fraction=0.0,  # No exploration in nodes other than root
@@ -337,6 +346,10 @@ def expand(tree, node_index, prediction_fn, afterstate_prediction_fn, dynamics_f
 
 
 def backprop(tree, leaf_index, discount_factor):
+    # These values have been filled by init_node together with num_visits
+    leaf_reward_optimism = tree['reward_optimism_sum'][leaf_index]
+    leaf_value = tree['value_sum'][leaf_index]
+
     def while_condition(loop_state):
         tree, current_node_index, value = loop_state
         return current_node_index != 0
@@ -349,11 +362,11 @@ def backprop(tree, leaf_index, discount_factor):
         value = value * discount_factor + tree['reward'][current_index]
         tree = update_value_normalization(tree, value)
         tree['value_sum'] = tree['value_sum'].at[parent_index].add(value)
+        tree['reward_optimism_sum'] = tree['reward_optimism_sum'].at[parent_index].add(leaf_reward_optimism)
         tree['num_visits'] = tree['num_visits'].at[parent_index].add(1)
 
         return tree, parent_index, value
 
-    leaf_value = tree['value_sum'][leaf_index]  # Filled by init_node together with num_visits
     tree, root_node_index, root_value = jax.lax.while_loop(
         cond_fun=while_condition, body_fun=loop_body, init_val=(tree, leaf_index, leaf_value))
 
@@ -406,6 +419,7 @@ def mcts(
 
     stats = {
         'mcts_search_depth': max_depth,
+        'mcts_avg_reward_optimism': get_avg_reward_optimism(tree=updated_tree, node_index=0),
     }
 
     return root_mcts_policy_log_probs, root_mcts_value, updated_tree, stats

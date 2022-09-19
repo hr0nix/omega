@@ -81,7 +81,12 @@ class SimpleBandit:
             assert 'Unexpected afterstate'
 
         next_state = 1
-        return np.asarray(next_state, dtype=np.int32), np.asarray(reward, dtype=np.float32)
+        reward_optimism = 0.0
+        return (
+            np.asarray(next_state, dtype=np.int32),
+            np.asarray(reward, dtype=np.float32),
+            np.asarray(reward_optimism, dtype=np.float32),
+        )
 
     def afterstate_dynamics(self, state, action, rng):
         if action == 0:

@@ -542,8 +542,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 deterministic=False, rngs={'dropout': rng})
             reward_probs = jnp.exp(log_reward_probs_ensemble)
             reward_mean, reward_stddev = ensemble_mmean_mstddev(reward_probs, self._value_reward_support, axis=0)
-            reward = reward_mean + self._config.exploration_optimism * reward_stddev
-            return next_state, reward
+            reward_optimism = self._config.exploration_optimism * reward_stddev
+            reward = reward_mean + reward_optimism
+            return next_state, reward, reward_optimism
 
         def afterstate_dynamics_fn(prev_state, action, rng):
             afterstate = train_state.afterstate_dynamics_fn(
