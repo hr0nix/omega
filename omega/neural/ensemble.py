@@ -7,7 +7,7 @@ Array = Any
 
 
 class DropoutEnsemble(nn.Module):
-    element_type: nn.Module = None
+    element_type: nn.Module
     element_config: Dict = field(default_factory=lambda: {})
 
     @nn.compact
