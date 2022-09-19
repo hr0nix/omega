@@ -73,10 +73,6 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         state_similarity_loss_weight: float = 0.001
         state_similarity_loss_stop_gradient: bool = False
 
-        act_deterministic: bool = False
-        reanalyze_deterministic: bool = False
-        train_deterministic: bool = False
-
         use_importance_weights: bool = False
         use_priorities: bool = False
         reward_loss_priority_weight: float = 1.0
@@ -588,8 +584,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1)
 
         updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
-            observation_trajectory_batch, memory_trajectory_batch,
-            train_state, self._config.act_deterministic, mcts_stats_key)
+            observation_trajectory_batch, memory_trajectory_batch, train_state,
+            deterministic=False, rng=mcts_stats_key)
 
         # Get rid of the fake timestamp dimension that we've added before
         mcts_policy_log_probs = pytree.squeeze(mcts_policy_log_probs, axis=1)
@@ -624,21 +620,20 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         def loss_function(params, rng):
             def trajectory_loss(params, trajectory, rng):
-                deterministic = self._config.train_deterministic
-
                 num_unroll_steps = self._config.num_train_unroll_steps
 
                 # Convert observation trajectory into a sequence of latent states for each timestamp
                 rng, representation_key = jax.random.split(rng)
                 trajectory_latent_states, _ = self._represent_trajectory(
-                    params, trajectory['current_state'], trajectory['memory_before'],
-                    train_state, deterministic, representation_key)
+                    params, trajectory['current_state'], trajectory['memory_before'], train_state,
+                    deterministic=False, rng=representation_key)
                 trajectory_latent_states_padded = pad_zeros(trajectory_latent_states, num_unroll_steps, axis=0)
                 num_timestamps = trajectory_latent_states.shape[0]
 
                 # Encode latent states with VQ-VAE chance outcome encoder
                 def chance_outcome_encoder(state, rng):
-                    return train_state.chance_outcome_encoder_fn(params, state, deterministic, rngs={'dropout': rng})
+                    return train_state.chance_outcome_encoder_fn(
+                        params, state, deterministic=False, rngs={'dropout': rng})
                 batch_chance_outcome_encoder_fn = jax.vmap(chance_outcome_encoder)
                 rng, chance_outcome_key = jax.random.split(rng)
                 chance_outcome_key_batch = jax.random.split(chance_outcome_key, num_timestamps)
@@ -695,7 +690,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict state value and the next action
                     def prediction_fn(state, rng):
                         return train_state.prediction_fn(
-                            params, state, deterministic=deterministic, rngs={'dropout': rng})
+                            params, state, deterministic=False, rngs={'dropout': rng})
                     rng, prediction_key = jax.random.split(rng)
                     prediction_key_batch = jax.random.split(prediction_key, num_timestamps)
                     batch_prediction_fn = jax.vmap(prediction_fn)
@@ -705,7 +700,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the afterstate
                     def afterstate_dynamics_fn(state, action, rng):
                         return train_state.afterstate_dynamics_fn(
-                            params, state, action, deterministic=deterministic, rngs={'dropout': rng})
+                            params, state, action, deterministic=False, rngs={'dropout': rng})
                     rng, afterstate_dynamics_key = jax.random.split(rng)
                     afterstate_dynamics_key_batch = jax.random.split(afterstate_dynamics_key, num_timestamps)
                     batch_afterstate_dynamics_fn = jax.vmap(afterstate_dynamics_fn)
@@ -715,7 +710,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     # Predict the afterstate value and the chance outcome
                     def afterstate_prediction_fn(afterstate, rng):
                         return train_state.afterstate_prediction_fn(
-                            params, afterstate, deterministic=deterministic, rngs={'dropout': rng})
+                            params, afterstate, deterministic=False, rngs={'dropout': rng})
                     rng, afterstate_prediction_key = jax.random.split(rng)
                     afterstate_prediction_key_batch = jax.random.split(afterstate_prediction_key, num_timestamps)
                     batch_afterstate_prediction_fn = jax.vmap(afterstate_prediction_fn)
@@ -726,7 +721,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                     def dynamics_fn(latent_afterstate, chance_outcome_one_hot, rng):
                         return train_state.dynamics_fn(
                             params, latent_afterstate, chance_outcome_one_hot,
-                            deterministic=deterministic, rngs={'dropout': rng})
+                            deterministic=False, rngs={'dropout': rng})
                     rng, dynamics_key = jax.random.split(rng)
                     dynamics_key_batch = jax.random.split(dynamics_key, num_timestamps)
                     batch_dynamics_fn = jax.vmap(dynamics_fn)
@@ -899,8 +894,8 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
         updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
-            trajectory_batch['current_state'], trajectory_batch['memory_before'],
-            train_state, self._config.reanalyze_deterministic, rng)
+            trajectory_batch['current_state'], trajectory_batch['memory_before'], train_state,
+            deterministic=False, rng=rng)
         trajectory_batch = pytree.update(trajectory_batch, {
             'mcts_reanalyze': {
                 'log_action_probs': mcts_policy_log_probs,
