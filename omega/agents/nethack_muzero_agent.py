@@ -286,6 +286,10 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             ),
             'act_avg_mcts_state_value': jnp.mean(trajectory_batch['act_metadata']['mcts_state_values']),
             'act_var_mcts_state_value': jnp.var(trajectory_batch['act_metadata']['mcts_state_values']),
+            'act_avg_mcts_reward_optimism': jnp.mean(
+                trajectory_batch['act_metadata']['mcts_stats']['mcts_avg_reward_optimism']),
+            'act_avg_mcts_search_depth': jnp.mean(
+                trajectory_batch['act_metadata']['mcts_stats']['mcts_search_depth']),
         }
 
     @timeit
@@ -588,7 +592,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         observation_trajectory_batch = pytree.expand_dims(observation_batch, axis=1)
         memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1)
 
-        updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
+        updated_memory, mcts_policy_log_probs, mcts_value, mcts_stats = self._compute_mcts_statistics(
             observation_trajectory_batch, memory_trajectory_batch, train_state, rng=mcts_stats_key)
 
         # Get rid of the fake timestamp dimension that we've added before
@@ -603,6 +607,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             'memory_state_after': updated_memory,
             'log_mcts_action_probs': mcts_policy_log_probs,
             'mcts_state_values': mcts_value,
+            'mcts_stats': mcts_stats,
         }
 
         return selected_actions, act_metadata
@@ -912,8 +917,9 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             ),
             'reanalyze_avg_mcts_state_value': jnp.mean(trajectory_batch['mcts_reanalyze']['state_values']),
             'reanalyze_var_mcts_state_value': jnp.var(trajectory_batch['mcts_reanalyze']['state_values']),
+            'reanalyze_avg_mcts_reward_optimism': jnp.mean(mcts_stats['mcts_avg_reward_optimism']),
+            'reanalyze_avg_mcts_search_depth': jnp.mean(mcts_stats['mcts_search_depth']),
         }
-        reanalyze_stats = pytree.update(reanalyze_stats, pytree.mean(mcts_stats))
         return trajectory_batch, reanalyze_stats
 
     @checkify_method
