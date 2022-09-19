@@ -232,15 +232,17 @@ class NethackPerceiverMuZeroModel(nn.Module):
         reward_log_probs_ensemble = jax.nn.log_softmax(reward_logits_ensemble, axis=-1)
         if return_ensemble:
             reward_log_probs = reward_log_probs_ensemble
-            chex.assert_rank(reward_log_probs, 3)
+            reward_log_probs = pytree.squeeze(reward_log_probs, axis=1)
+            chex.assert_rank(reward_log_probs, 2)
         else:
             reward_log_probs = aggregate_mixture_log_probs(reward_log_probs_ensemble, axis=0)
-            chex.assert_rank(reward_log_probs, 2)
+            reward_log_probs = pytree.squeeze(reward_log_probs, axis=0)
+            chex.assert_rank(reward_log_probs, 1)
 
         chex.assert_rank(next_latent_state, 3)
         return (
             pytree.squeeze(next_latent_state, axis=0),
-            pytree.squeeze(reward_log_probs, axis=0),
+            reward_log_probs,
         )
 
     def prediction(self, latent_state, ensemble_size=1, deterministic=None):

@@ -30,6 +30,8 @@ agent_config:
   warmup_days: 0
   reanalyze_batch_size: 1
   num_mcts_simulations: 2
+  mcts_reward_ensemble_size: 3
+  exploration_optimism: 1.0
   model_config:
     num_chance_outcomes: 16
     context_dependent_state_encoder: true
