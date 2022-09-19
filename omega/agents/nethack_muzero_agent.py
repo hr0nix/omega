@@ -22,7 +22,7 @@ import jax.experimental.checkify as checkify
 import rlax
 import optax
 
-from ..math.probability import entropy, cross_entropy
+from ..math.probability import entropy, cross_entropy, ensemble_mmean_mstddev
 from ..utils import pytree
 from ..utils.flax import merge_params
 from ..utils.jax import throws_on_checkify_error, checkify_method
@@ -63,6 +63,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         value_reward_min_max: Tuple[float, float] = (-1.0, 1.0)
         mcts_reward_ensemble_size: int = 1
         mcts_value_ensemble_size: int = 1
+        exploration_optimism: float = 0.0
 
         chance_outcome_commitment_loss_weight: float = 50.0
         chance_outcome_prediction_loss_weight: float = 1.0
@@ -103,11 +104,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         self._replay_buffer = replay_buffer
         self._current_train_step = 0
 
-        self._value_reward_transform_pair = make_value_reward_transform_pair(
+        value_reward_params = dict(
             min_value=self._config.value_reward_min_max[0],
             max_value=self._config.value_reward_min_max[1],
             num_bins=self._config.value_reward_bins,
         )
+        self._value_reward_transform_pair = make_value_reward_transform_pair(**value_reward_params)
+        self._value_reward_support = get_value_reward_support(**value_reward_params)
 
         self._build_model(model_factory)
 
@@ -355,13 +358,13 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         }
 
     @staticmethod
-    def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, deterministic, rng):
+    def _represent_trajectory(params, observation_trajectory, memory_trajectory, train_state, rng):
         """
         Recurrently unrolls the representation function forwards starting from the initial memory state
         to embed the given observation trajectory.
         """
         initial_memory_state_fn = train_state.initial_memory_state_fn
-        representation_fn = functools.partial(train_state.representation_fn, deterministic=deterministic)
+        representation_fn = functools.partial(train_state.representation_fn, deterministic=False)
 
         def representation_loop(state, input):
             rng, prev_memory, first_timestamp_of_the_day = state
@@ -505,23 +508,22 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
 
         return stats
 
-    def _compute_mcts_statistics(
-            self, observation_trajectory_batch, memory_trajectory_batch, train_state, deterministic, rng):
+    def _compute_mcts_statistics(self, observation_trajectory_batch, memory_trajectory_batch, train_state, rng):
         batch_size, num_timestamps = jax.tree_util.tree_leaves(observation_trajectory_batch)[0].shape[:2]
 
         rng, represent_trajectory_key = jax.random.split(rng)
         represent_trajectory_key_batch = jax.random.split(represent_trajectory_key, batch_size)
-        represent_trajectory_batch_fn = jax.vmap(self._represent_trajectory, in_axes=(None, 0, 0, None, None, 0))
+        represent_trajectory_batch_fn = jax.vmap(self._represent_trajectory, in_axes=(None, 0, 0, None, 0))
         latent_state_trajectory_batch, updated_memory_trajectory_batch = represent_trajectory_batch_fn(
             train_state.params,
             observation_trajectory_batch, memory_trajectory_batch,
-            train_state, deterministic, represent_trajectory_key_batch)
+            train_state, represent_trajectory_key_batch)
 
         def prediction_fn(state, rng):
             log_action_probs, log_value_probs = train_state.prediction_fn(
                 train_state.params, state,
                 ensemble_size=self._config.mcts_value_ensemble_size,
-                deterministic=deterministic, rngs={'dropout': rng})
+                deterministic=False, rngs={'dropout': rng})
             value_probs = jnp.exp(log_value_probs)
             return log_action_probs, self._value_reward_transform_pair.apply_inv(value_probs)
 
@@ -529,21 +531,23 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
             log_chance_outcome_probs, log_afterstate_value_probs = train_state.afterstate_prediction_fn(
                 train_state.params, afterstate,
                 ensemble_size=self._config.mcts_value_ensemble_size,
-                deterministic=deterministic, rngs={'dropout': rng})
+                deterministic=False, rngs={'dropout': rng})
             afterstate_value_probs = jnp.exp(log_afterstate_value_probs)
             return log_chance_outcome_probs, self._value_reward_transform_pair.apply_inv(afterstate_value_probs)
 
         def dynamics_fn(afterstate, chance_outcome, rng):
-            next_state, log_reward_probs = train_state.dynamics_fn(
+            next_state, log_reward_probs_ensemble = train_state.dynamics_fn(
                 train_state.params, afterstate, chance_outcome,
-                ensemble_size=self._config.mcts_reward_ensemble_size,
-                deterministic=deterministic, rngs={'dropout': rng})
-            reward_probs = jnp.exp(log_reward_probs)
-            return next_state, self._value_reward_transform_pair.apply_inv(reward_probs)
+                ensemble_size=self._config.mcts_reward_ensemble_size, return_ensemble=True,
+                deterministic=False, rngs={'dropout': rng})
+            reward_probs = jnp.exp(log_reward_probs_ensemble)
+            reward_mean, reward_stddev = ensemble_mmean_mstddev(reward_probs, self._value_reward_support, axis=0)
+            reward = reward_mean + self._config.exploration_optimism * reward_stddev
+            return next_state, reward
 
         def afterstate_dynamics_fn(prev_state, action, rng):
             afterstate = train_state.afterstate_dynamics_fn(
-                train_state.params, prev_state, action, deterministic=deterministic, rngs={'dropout': rng})
+                train_state.params, prev_state, action, deterministic=False, rngs={'dropout': rng})
             return afterstate
 
         mcts_func = functools.partial(
@@ -584,8 +588,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         memory_trajectory_batch = pytree.expand_dims(memory_batch, axis=1)
 
         updated_memory, mcts_policy_log_probs, mcts_value, _ = self._compute_mcts_statistics(
-            observation_trajectory_batch, memory_trajectory_batch, train_state,
-            deterministic=False, rng=mcts_stats_key)
+            observation_trajectory_batch, memory_trajectory_batch, train_state, rng=mcts_stats_key)
 
         # Get rid of the fake timestamp dimension that we've added before
         mcts_policy_log_probs = pytree.squeeze(mcts_policy_log_probs, axis=1)
@@ -626,7 +629,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
                 rng, representation_key = jax.random.split(rng)
                 trajectory_latent_states, _ = self._represent_trajectory(
                     params, trajectory['current_state'], trajectory['memory_before'], train_state,
-                    deterministic=False, rng=representation_key)
+                    rng=representation_key)
                 trajectory_latent_states_padded = pad_zeros(trajectory_latent_states, num_unroll_steps, axis=0)
                 num_timestamps = trajectory_latent_states.shape[0]
 
@@ -894,8 +897,7 @@ class NethackMuZeroAgent(JaxTrainableAgentBase):
         """
         # TODO: reanalyze can be done in minibatches if memory ever becomes a problem
         updated_memory, mcts_policy_log_probs, mcts_values, mcts_stats = self._compute_mcts_statistics(
-            trajectory_batch['current_state'], trajectory_batch['memory_before'], train_state,
-            deterministic=False, rng=rng)
+            trajectory_batch['current_state'], trajectory_batch['memory_before'], train_state, rng=rng)
         trajectory_batch = pytree.update(trajectory_batch, {
             'mcts_reanalyze': {
                 'log_action_probs': mcts_policy_log_probs,
@@ -1049,3 +1051,8 @@ def make_value_reward_transform_pair(min_value, max_value, num_bins):
         return result
 
     return rlax.TxPair(apply=apply, apply_inv=apply_inv)
+
+
+def get_value_reward_support(min_value, max_value, num_bins):
+    # From implementation of rlax.transform_from_2hot
+    return jnp.linspace(min_value, max_value, num_bins)

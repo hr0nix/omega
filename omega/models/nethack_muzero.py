@@ -204,7 +204,10 @@ class NethackPerceiverMuZeroModel(nn.Module):
         chex.assert_rank(latent_afterstate, 3)
         return pytree.squeeze(latent_afterstate, axis=0)
 
-    def dynamics(self, latent_afterstate, chance_outcome_one_hot, ensemble_size=1, deterministic=None):
+    def dynamics(
+            self, latent_afterstate, chance_outcome_one_hot,
+            ensemble_size=1, return_ensemble=False, deterministic=None
+    ):
         """
         Produces the next latent state and reward if a given chance outcome happens at a given afterstate.
         Inputs are assumed to be non-batched.
@@ -227,12 +230,17 @@ class NethackPerceiverMuZeroModel(nn.Module):
 
         reward_logits_ensemble = self._reward_predictor(latent_afterstate_with_chance_outcome, ensemble_size)
         reward_log_probs_ensemble = jax.nn.log_softmax(reward_logits_ensemble, axis=-1)
-        aggregated_reward_log_probs = aggregate_mixture_log_probs(reward_log_probs_ensemble, axis=0)
+        if return_ensemble:
+            reward_log_probs = reward_log_probs_ensemble
+            chex.assert_rank(reward_log_probs, 3)
+        else:
+            reward_log_probs = aggregate_mixture_log_probs(reward_log_probs_ensemble, axis=0)
+            chex.assert_rank(reward_log_probs, 2)
 
-        chex.assert_rank([next_latent_state, aggregated_reward_log_probs], [3, 2])
+        chex.assert_rank(next_latent_state, 3)
         return (
             pytree.squeeze(next_latent_state, axis=0),
-            pytree.squeeze(aggregated_reward_log_probs, axis=0),
+            pytree.squeeze(reward_log_probs, axis=0),
         )
 
     def prediction(self, latent_state, ensemble_size=1, deterministic=None):

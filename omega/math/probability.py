@@ -32,6 +32,27 @@ def aggregate_mixture_log_probs(log_probs, axis=0):
     return jax.nn.logsumexp(log_probs - log_normalizer, axis=axis)
 
 
+def ensemble_mmean_mstddev(log_probs, support, axis=0):
+    """
+    Computes mean of means and standard deviation of means for a categorical ensemble.
+    @param log_probs: the log-probs corresponding to mixture components.
+    @param support: an array mapping categorical distribution outcomes to the actual values they represent.
+    @param axis: the mixture dimension of the input tensor.
+    @return: the mean and the standard deviation of means.
+    """
+    assert len(log_probs.shape) >= 2
+    assert len(support.shape) == 1
+    chex.assert_equal_shape_suffix([log_probs, support], 1)
+    assert axis not in [-1, len(log_probs.shape) - 1], 'Ensemble axis must be different from logits axis'
+
+    probs = jnp.exp(log_probs)
+    means = jnp.sum(probs * support, axis=-1)
+    mean_of_means = jnp.mean(means, axis=axis)
+    stddev_of_means = jnp.std(means, axis=axis)
+
+    return mean_of_means, stddev_of_means
+
+
 def categorical_mean_stddev(log_probs, support):
     """
     Computes mean and standard deviation of a categorical distribution.
